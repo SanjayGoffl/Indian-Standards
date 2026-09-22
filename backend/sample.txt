@@ -1,0 +1,19 @@
+Artificial Intelligence (AI) is a branch of computer science that focuses on creating systems capable of performing tasks that normally require human intelligence. These tasks include learning from data, understanding natural language, recognizing patterns, making decisions, and solving complex problems.
+
+Machine Learning (ML) is a subset of Artificial Intelligence. Instead of being explicitly programmed, machine learning models learn patterns from historical data and use those patterns to make predictions or decisions. Popular machine learning algorithms include Linear Regression, Decision Trees, Random Forests, and Neural Networks.
+
+Deep Learning is a specialized field of machine learning that uses artificial neural networks with multiple hidden layers. Deep learning has achieved remarkable success in image recognition, speech recognition, language translation, and autonomous driving.
+
+Natural Language Processing (NLP) enables computers to understand, interpret, and generate human language. Applications of NLP include chatbots, machine translation, sentiment analysis, document summarization, and question answering systems.
+
+Retrieval-Augmented Generation (RAG) combines information retrieval with large language models. Instead of relying only on the knowledge stored inside the language model, RAG first retrieves relevant information from external documents and then uses that information to generate accurate, context-aware responses.
+
+The RAG pipeline typically consists of four major steps. First, documents are ingested from different sources such as PDF, DOCX, TXT, or CSV files. Second, the extracted text is divided into smaller overlapping chunks. Third, each chunk is converted into a numerical embedding using a sentence transformer model. Finally, the embeddings are stored inside a vector database such as ChromaDB for efficient semantic search.
+
+Embeddings are dense numerical vectors that capture the semantic meaning of text. Similar pieces of text produce similar embedding vectors. Semantic search compares these vectors instead of matching exact keywords, allowing users to retrieve relevant information even when different words are used.
+
+Vector databases are specifically designed to store and search embedding vectors efficiently. ChromaDB is an open-source vector database commonly used in Retrieval-Augmented Generation systems. It supports similarity search, persistent storage, and metadata filtering.
+
+The all-MiniLM-L6-v2 model is a lightweight Sentence Transformer model that generates 384-dimensional embeddings. It is widely used in student projects because it is free, fast, and provides good semantic search performance while running locally without requiring paid APIs.
+
+The goal of this project is to build an AI-powered Knowledge Retrieval Platform capable of answering user questions from uploaded documents. The system supports PDF, DOCX, TXT, and CSV files, performs semantic search using embeddings, stores vectors in ChromaDB, and forms the foundation for a multi-agent query resolution system.

@@ -1,0 +1,314 @@
+/* App.css - Global page components styling */
+
+/* Full viewport adjustments for layout wrapper */
+.main-app {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  position: relative;
+  background: var(--bg-gradient);
+}
+
+/* ================================================================
+   Sidebar User Profile
+   ================================================================ */
+
+.sidebar-user-section {
+  position: relative;
+  width: calc(100% - 32px);
+  margin: 12px 16px 0;
+  box-sizing: border-box;
+}
+
+/* ---------------------------------------------------------------
+   Main user button
+   --------------------------------------------------------------- */
+
+.sidebar-user-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+  color: rgba(240, 249, 250, 0.9);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.sidebar-user-button:hover {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* ---------------------------------------------------------------
+   Avatar
+   --------------------------------------------------------------- */
+
+.sidebar-user-avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    #08ced3,
+    #0aa7df
+  );
+  color: #041416;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.sidebar-user-avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+/* ---------------------------------------------------------------
+   Name + email
+   --------------------------------------------------------------- */
+
+.sidebar-user-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.sidebar-user-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(220, 235, 236, 0.5);
+  font-size: 0.65rem;
+}
+
+/* ---------------------------------------------------------------
+   Chevron
+   --------------------------------------------------------------- */
+
+.sidebar-user-chevron {
+  flex: 0 0 auto;
+  color: rgba(220, 235, 236, 0.45);
+}
+
+/* ---------------------------------------------------------------
+   Dropdown
+   --------------------------------------------------------------- */
+
+.sidebar-user-menu {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 7px);
+  z-index: 300;
+  padding: 10px;
+  box-sizing: border-box;
+  border-radius: 13px;
+  background: rgba(9, 23, 25, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    0 18px 45px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.sidebar-user-menu.show {
+  display: block;
+}
+
+/* ---------------------------------------------------------------
+   Profile summary
+   --------------------------------------------------------------- */
+
+.sidebar-profile-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px;
+}
+
+.sidebar-profile-avatar {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    #08ced3,
+    #0aa7df
+  );
+  color: #041416;
+  font-weight: 800;
+}
+
+.sidebar-profile-avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.sidebar-profile-details {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-profile-details strong {
+  color: #ffffff;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-profile-details span {
+  color: rgba(220, 235, 236, 0.5);
+  font-size: 0.66rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-profile-details small {
+  width: fit-content;
+  margin-top: 3px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #12d4d7;
+  background: rgba(0, 210, 215, 0.08);
+  border: 1px solid rgba(0, 210, 215, 0.15);
+  font-size: 0.58rem;
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------
+   Divider
+   --------------------------------------------------------------- */
+
+.sidebar-profile-divider {
+  height: 1px;
+  margin: 4px 7px 7px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* ---------------------------------------------------------------
+   Logout
+   --------------------------------------------------------------- */
+
+.sidebar-logout-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 150, 150, 0.85);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.sidebar-logout-button:hover {
+  background: rgba(255, 70, 70, 0.08);
+  color: #ff8585;
+}
+
+/* ================================================================
+   Mobile
+   ================================================================ */
+
+@media (max-width: 600px) {
+  .sidebar-user-section {
+    width: calc(100% - 20px);
+    margin-left: 10px;
+    margin-right: 10px;
+  }
+
+  .sidebar-user-info {
+    display: none;
+  }
+
+  .sidebar-user-button {
+    justify-content: center;
+    padding: 7px;
+  }
+
+  .sidebar-user-avatar {
+    width: 34px;
+    height: 34px;
+  }
+
+  .sidebar-user-chevron {
+    display: none;
+  }
+
+  .sidebar-user-menu {
+    left: 0;
+    right: 0;
+  }
+}
+
+/* ================================================================
+   ChatPage responsive layout
+   ================================================================ */
+.chat-page-layout { min-width: 0; min-height: 0; }
+.chat-page-main-panel { min-width: 0; min-height: 0; }
+.context-inspector-panel { min-width: 0; min-height: 0; }
+@media (max-width: 900px) {
+  .chat-page-layout { flex-direction: column; overflow-y: auto !important; overflow-x: hidden !important; }
+  .chat-page-main-panel { width: 100% !important; height: 65vh !important; min-height: 420px; flex: 0 0 65vh !important; border-right: none !important; border-bottom: 1px solid var(--border-color); }
+  .context-inspector-panel { width: 100% !important; height: 35vh !important; min-height: 260px; flex: 0 0 35vh !important; }
+}
+@media (max-width: 600px) {
+  .chat-page-main-panel { height: 68vh !important; flex-basis: 68vh !important; min-height: 430px; }
+  .context-inspector-panel { height: 32vh !important; flex-basis: 32vh !important; min-height: 250px; }
+}
+@media (max-width: 430px) {
+  .chat-page-main-panel { height: 70vh !important; flex-basis: 70vh !important; min-height: 420px; }
+  .context-inspector-panel { height: 30vh !important; flex-basis: 30vh !important; min-height: 230px; }
+}
