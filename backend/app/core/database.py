@@ -42,6 +42,28 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
 
+    # Safe backward-compatible schema migration for newly added columns
+    with engine.connect() as conn:
+        from sqlalchemy import text
+        migrations = [
+            "ALTER TABLE indian_standards ADD COLUMN IF NOT EXISTS technical_requirements TEXT;",
+            "ALTER TABLE indian_standards ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);",
+            "ALTER TABLE indian_standards ADD COLUMN IF NOT EXISTS source VARCHAR(150);",
+            "ALTER TABLE indian_standards ADD COLUMN IF NOT EXISTS retrieved_at VARCHAR(100);",
+            "ALTER TABLE indian_standards ADD COLUMN IF NOT EXISTS verification_status VARCHAR(100);",
+            "ALTER TABLE indian_standards ADD COLUMN IF NOT EXISTS last_updated TIMESTAMP;",
+            "ALTER TABLE standard_relationships ADD COLUMN IF NOT EXISTS source_evidence TEXT;",
+            "ALTER TABLE standard_relationships ADD COLUMN IF NOT EXISTS source_document VARCHAR(255);",
+            "ALTER TABLE standard_relationships ADD COLUMN IF NOT EXISTS page_or_clause_reference VARCHAR(100);",
+            "ALTER TABLE standard_relationships ADD COLUMN IF NOT EXISTS verification_status VARCHAR(100);"
+        ]
+        for m in migrations:
+            try:
+                conn.execute(text(m))
+                conn.commit()
+            except Exception:
+                pass
+
 
 def get_db() -> Generator[Session, None, None]:
     """

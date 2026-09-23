@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.core.models import IndianStandard, StandardRelationship, CertificationRequirement
 from app.rag.chromadb_service import chroma_service
+from app.services.bis_connector import MockBISConnector
+from app.services.standards_ingestion import ingest_standards
 
 logger = logging.getLogger(__name__)
 
@@ -334,110 +336,10 @@ INITIAL_INDIAN_STANDARDS_SEED: List[Dict[str, Any]] = [
 
 def seed_indian_standards(db: Session) -> Dict[str, Any]:
     """
-    Seeds initial authentic Indian Standards into PostgreSQL database and ChromaDB vector collection.
+    Seeds initial authentic Indian Standards into PostgreSQL database and ChromaDB vector collection
+    using the modular BIS standards ingestion pipeline.
     """
-    seeded_count = 0
-    updated_count = 0
-
-    # Ensure vector store collection exists
-    collection = chroma_service.get_or_create_collection("indian_standards_kb")
-
-    # Map of standard_number -> db object
-    standard_map: Dict[str, IndianStandard] = {}
-
-    for item in INITIAL_INDIAN_STANDARDS_SEED:
-        existing = db.query(IndianStandard).filter(IndianStandard.standard_number == item["standard_number"]).first()
-
-        if not existing:
-            standard = IndianStandard(
-                standard_number=item["standard_number"],
-                title=item["title"],
-                scope=item["scope"],
-                category=item["category"],
-                sector=item["sector"],
-                publication_date=item.get("publication_date"),
-                revision=item.get("revision"),
-                amendment_details=item.get("amendment_details"),
-                status=item.get("status", "Active"),
-                source_url=item.get("source_url"),
-                evidence_text=item.get("evidence_text"),
-            )
-            db.add(standard)
-            db.flush()
-            standard_map[item["standard_number"]] = standard
-            seeded_count += 1
-        else:
-            existing.title = item["title"]
-            existing.scope = item["scope"]
-            existing.category = item["category"]
-            existing.sector = item["sector"]
-            existing.revision = item.get("revision")
-            existing.evidence_text = item.get("evidence_text")
-            standard_map[item["standard_number"]] = existing
-            updated_count += 1
-
-        db.commit()
-
-        # Add certifications
-        std_obj = standard_map[item["standard_number"]]
-        for cert in item.get("certifications", []):
-            existing_cert = db.query(CertificationRequirement).filter(
-                CertificationRequirement.standard_id == std_obj.id,
-                CertificationRequirement.certification_type == cert["certification_type"]
-            ).first()
-            if not existing_cert:
-                cert_obj = CertificationRequirement(
-                    standard_id=std_obj.id,
-                    certification_type=cert["certification_type"],
-                    applicability=cert.get("applicability", "Mandatory"),
-                    source_url=cert.get("source_url"),
-                    verification_status=cert.get("verification_status")
-                )
-                db.add(cert_obj)
-        db.commit()
-
-        # Vector collection insertion
-        text_for_embedding = f"Standard Number: {item['standard_number']}\nTitle: {item['title']}\nCategory: {item['category']}\nSector: {item['sector']}\nScope: {item['scope']}\nEvidence: {item.get('evidence_text', '')}"
-        
-        # We check if document exists in vector store, if not add
-        try:
-            collection.upsert(
-                documents=[text_for_embedding],
-                metadatas=[{
-                    "standard_number": item["standard_number"],
-                    "title": item["title"],
-                    "category": item["category"],
-                    "sector": item["sector"],
-                    "revision": item.get("revision", "")
-                }],
-                ids=[item["standard_number"].replace(" ", "_").replace("/", "_").replace(":", "_")]
-            )
-        except Exception as e:
-            logger.warning(f"ChromaDB upsert failed for {item['standard_number']}: {str(e)}")
-
-    # Add relationships
-    for item in INITIAL_INDIAN_STANDARDS_SEED:
-        parent_std = standard_map.get(item["standard_number"])
-        if not parent_std:
-            continue
-        for rel in item.get("relationships", []):
-            rel_std_number = rel["related_standard_number"]
-            # Look up related std
-            rel_std = db.query(IndianStandard).filter(IndianStandard.standard_number.like(f"%{rel_std_number}%")).first()
-            if rel_std and rel_std.id != parent_std.id:
-                existing_rel = db.query(StandardRelationship).filter(
-                    StandardRelationship.standard_id == parent_std.id,
-                    StandardRelationship.related_standard_id == rel_std.id
-                ).first()
-                if not existing_rel:
-                    rel_obj = StandardRelationship(
-                        standard_id=parent_std.id,
-                        related_standard_id=rel_std.id,
-                        relationship_type=rel["relationship_type"],
-                        description=rel.get("description")
-                    )
-                    db.add(rel_obj)
-    db.commit()
-
-    logger.info(f"Seeded {seeded_count} new Indian Standards, updated {updated_count}.")
-    return {"seeded": seeded_count, "updated": updated_count, "total": len(INITIAL_INDIAN_STANDARDS_SEED)}
+    connector = MockBISConnector(INITIAL_INDIAN_STANDARDS_SEED)
+    summary = ingest_standards(db, connector)
+    logger.info(f"Seeded/Updated Indian Standards via Ingestion Pipeline: {summary}")
+    return summary

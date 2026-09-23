@@ -118,10 +118,8 @@ def process_procurement_recommendation(
         for rel in item.get("related_standards", []):
             rel_norm = normalize_standard_number(rel["standard_number"])
             if rel_norm not in seen_rel_nums and rel_norm not in seen_applicable_nums:
-                # Ensure related standard is not in excluded standards
-                if not any(normalize_standard_number(ex["standard_number"]) == rel_norm for ex in excluded_standards):
-                    seen_rel_nums.add(rel_norm)
-                    related_standards_list.append(rel)
+                seen_rel_nums.add(rel_norm)
+                related_standards_list.append(rel)
 
         # Version verification
         std_obj = db.query(IndianStandard).filter(IndianStandard.standard_number == std_num).first()

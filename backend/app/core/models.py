@@ -427,6 +427,41 @@ class IndianStandard(Base):
         nullable=True,
     )
 
+    technical_requirements = Column(
+        Text,
+        nullable=True,
+    )
+
+    content_hash = Column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
+
+    source = Column(
+        String(150),
+        nullable=True,
+        default="Authorized Local Catalog",
+    )
+
+    retrieved_at = Column(
+        String(100),
+        nullable=True,
+    )
+
+    verification_status = Column(
+        String(100),
+        nullable=True,
+        default="Verification Required",
+    )
+
+    last_updated = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=True, 
+    )
+
     created_at = Column(
         DateTime,
         server_default=func.now(),
@@ -481,6 +516,27 @@ class StandardRelationship(Base):
     description = Column(
         Text,
         nullable=True,
+    )
+
+    source_evidence = Column(
+        Text,
+        nullable=True,
+    )
+
+    source_document = Column(
+        String(255),
+        nullable=True,
+    )
+
+    page_or_clause_reference = Column(
+        String(100),
+        nullable=True,
+    )
+
+    verification_status = Column(
+        String(100),
+        nullable=True,
+        default="Verification Required",
     )
 
 
@@ -605,4 +661,91 @@ class CertificationRequirement(Base):
     standard = relationship(
         "IndianStandard",
         back_populates="certifications",
+    )
+
+
+class IngestionAuditLog(Base):
+    """
+    Audit log record tracking offline/admin ingestion runs, change detection metrics, and errors.
+    """
+
+    __tablename__ = "ingestion_audit_logs"
+
+    id = Column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+
+    ingestion_id = Column(
+        String(100),
+        nullable=False,
+        index=True,
+    )
+
+    source_name = Column(
+        String(150),
+        nullable=False,
+    )
+
+    start_time = Column(
+        DateTime,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    end_time = Column(
+        DateTime,
+        nullable=True,
+    )
+
+    total_records = Column(
+        Integer,
+        default=0,
+    )
+
+    new_records = Column(
+        Integer,
+        default=0,
+    )
+
+    updated_records = Column(
+        Integer,
+        default=0,
+    )
+
+    unchanged_records = Column(
+        Integer,
+        default=0,
+    )
+
+    failed_records = Column(
+        Integer,
+        default=0,
+    )
+
+    embeddings_created = Column(
+        Integer,
+        default=0,
+    )
+
+    embeddings_updated = Column(
+        Integer,
+        default=0,
+    )
+
+    status = Column(
+        String(50),
+        default="completed",
+    )
+
+    error_summary = Column(
+        Text,
+        nullable=True,
+    )
+
+    created_at = Column(
+        DateTime,
+        server_default=func.now(),
+        nullable=False,
     )

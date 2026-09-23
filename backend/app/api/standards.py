@@ -116,10 +116,50 @@ def get_standard_detail(
     }
 
 
+from app.dependencies.auth import get_current_user
+from app.core.models import User, IndianStandard, CertificationRequirement, StandardRelationship
+
+
 @router.post("/seed")
-def trigger_seed_standards(db: Session = Depends(get_db)):
+def trigger_seed_standards(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     """
     Admin trigger to seed default Indian Standards catalog.
+    Enforces JWT authentication.
     """
     res = seed_indian_standards(db)
     return {"message": "Knowledge base seeded successfully.", "details": res}
+
+
+@router.post("/sync")
+def sync_standards_ingestion(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Triggers incremental standards sync via the BIS connector ingestion pipeline.
+    Enforces JWT authentication.
+    """
+    from app.services.bis_connector import MockBISConnector
+    from app.services.standards_knowledge_base import INITIAL_INDIAN_STANDARDS_SEED
+    from app.services.standards_ingestion import ingest_standards
+
+    connector = MockBISConnector(INITIAL_INDIAN_STANDARDS_SEED)
+    result = ingest_standards(db, connector)
+    return {"message": "Standards sync executed successfully.", "summary": result}
+
+
+@router.get("/ingest-logs")
+def view_ingestion_logs(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Retrieves ingestion pipeline execution history and change detection logs.
+    Enforces JWT authentication.
+    """
+    from app.services.standards_ingestion import get_ingestion_logs
+    logs = get_ingestion_logs(db)
+    return {"logs": logs, "total_runs": len(logs)}
