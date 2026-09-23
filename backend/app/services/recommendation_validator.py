@@ -345,7 +345,7 @@ def validate_insulation_type(candidate_title: str, candidate_scope: str, extract
 
     if req_core == "PVC":
         if core_provision == "PVC":
-            return "Match", core_provision, outer_sheath_provision
+            return "Potential Match", core_provision, outer_sheath_provision
         elif core_provision == "XLPE":
             return "Mismatch", f"Primary Core Insulation is {core_provision} (Outer Sheath is {outer_sheath_provision})", outer_sheath_provision
         else:
@@ -353,7 +353,7 @@ def validate_insulation_type(candidate_title: str, candidate_scope: str, extract
 
     if req_core == "XLPE":
         if core_provision == "XLPE":
-            return "Match", core_provision, outer_sheath_provision
+            return "Potential Match", core_provision, outer_sheath_provision
         elif core_provision == "PVC":
             return "Mismatch", f"Primary Core Insulation is {core_provision}", outer_sheath_provision
 
@@ -363,7 +363,7 @@ def validate_insulation_type(candidate_title: str, candidate_scope: str, extract
 def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: List[Dict[str, Any]], target_category: str) -> List[Dict[str, Any]]:
     """
     Generates product-specific Field Comparison Matrix for candidate standard against extracted requirements.
-    Matrix items: Parameter, Required Value, Standard Provision, Result (Match / Mismatch / Unknown / Not Applicable / No Match / Not Mentioned)
+    Matrix items: Parameter, Required Value, Standard Provision, Evaluation/Result (Confirmed Match / Potential Match / Mismatch / Unknown / Missing Input / Requires Official Verification)
     """
     matrix = []
     c_title = candidate.title or ""
@@ -375,7 +375,7 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
     is_cable = any(w in t_cat_lower for w in ["cable", "wire", "conductor", "electrical"])
     is_gloves = any(w in t_cat_lower for w in ["glove", "gloves", "hand protection"])
     is_thermal = any(w in t_cat_lower for w in ["thermal insulation", "insulation padding", "turbine insulation"])
-    is_pipe = any(w in t_cat_lower for w in ["pipe", "hdpe"])
+    is_pipe = any(w in t_cat_lower for w in ["pipe", "pipes", "piping", "hdpe", "plumbing", "water supply", "conveyance", "effluent", "sewage"]) or "hdpe" in comb_text or "pipe" in comb_text
     is_helmet = any(w in t_cat_lower for w in ["helmet"])
 
     # 1. Product Category
@@ -384,7 +384,7 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
         "parameter": "Product Category",
         "required_value": target_category or "General Procurement",
         "standard_provision": c_cat or c_title[:60],
-        "result": "Match" if is_domain_match else "Not Applicable"
+        "result": "Potential Match" if is_domain_match else "Not Applicable"
     })
 
     if is_gloves:
@@ -405,7 +405,7 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
                 puncture = v_str
 
         mat_prov = "Covered" if "glove" in comb_text and ("latex" in comb_text or "nitrile" in comb_text or "rubber" in comb_text or "pvc" in comb_text) else "Not Covered"
-        mat_res = "Match" if (is_domain_match and mat_prov == "Covered") else "Not Mentioned"
+        mat_res = "Potential Match" if (is_domain_match and mat_prov == "Covered") else "Not Mentioned"
         matrix.append({
             "parameter": "Glove Material",
             "required_value": glove_mat,
@@ -414,7 +414,7 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
         })
 
         chem_prov = "Chemical resistance specified" if "chemical" in comb_text else "Not Covered"
-        chem_res_result = "Match" if (is_domain_match and "chemical" in comb_text) else ("No Match" if chem_res == "Required" else "Not Mentioned")
+        chem_res_result = "Potential Match" if (is_domain_match and "chemical" in comb_text) else ("No Match" if chem_res == "Required" else "Not Mentioned")
         matrix.append({
             "parameter": "Chemical Resistance",
             "required_value": chem_res,
@@ -423,7 +423,7 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
         })
 
         reus_prov = "Reusable PPE" if "reusable" in comb_text else "Not Covered"
-        reus_result = "Match" if (is_domain_match and "reusable" in comb_text) else "Not Mentioned"
+        reus_result = "Potential Match" if (is_domain_match and "reusable" in comb_text) else "Not Mentioned"
         matrix.append({
             "parameter": "Reusability",
             "required_value": reusable,
@@ -476,7 +476,7 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
 
         if "1100" in target_volts or "1.1 kv" in target_volts.lower():
             if "1100 v" in comb_text or "1100v" in comb_text or "1.1 kv" in comb_text or "up to and including 1100" in comb_text:
-                v_res = "Match"
+                v_res = "Potential Match"
                 v_prov = "Working voltages up to and including 1100 V"
             else:
                 v_res = "Unknown"
@@ -493,7 +493,7 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
         })
 
         if "conductor" in comb_text or "copper" in comb_text or "aluminium" in comb_text:
-            c_res = "Match"
+            c_res = "Potential Match"
             c_prov = "Applies to Copper & Aluminium Conductors"
         else:
             c_res = "Unknown"
@@ -507,7 +507,7 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
         })
 
         if "frls" in comb_text and "flame retardant low smoke" in comb_text:
-            f_res = "Match"
+            f_res = "Potential Match"
             f_prov = "Explicit FRLS compound testing specification referenced"
         else:
             f_res = "Unknown"
@@ -521,7 +521,7 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
         })
 
         if "dielectric" in comb_text or "high voltage" in comb_text:
-            t_res = "Partial Match"
+            t_res = "Potential Match"
             t_prov = "General dielectric testing procedures referenced; exact clause verification required"
         else:
             t_res = "Unknown"
@@ -634,8 +634,8 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
                 "parameter": p_name,
                 "procurement_requirement": v_val,
                 "required_value": v_val,
-                "indexed_standard_evidence": "Refer to official standard document" if res == "Potential Match" else "Not Covered",
-                "standard_provision": "Refer to official standard document" if res == "Potential Match" else "Not Covered",
+                "indexed_standard_evidence": "Technical provision requires verification against the official standard document." if res == "Potential Match" else "Not Covered",
+                "standard_provision": "Technical provision requires verification against the official standard document." if res == "Potential Match" else "Not Covered",
                 "evaluation": res,
                 "result": res
             })
@@ -646,11 +646,11 @@ def calculate_technical_match_score(matrix: List[Dict[str, Any]]) -> Tuple[float
     """
     Calculates explainable score (0.0 to 1.0) and match strength label based on Field Comparison Matrix.
     """
-    domain_item = next((item for item in matrix if item["parameter"] == "Product Category"), None)
+    domain_item = next((item for item in matrix if item["parameter"] in ["Product Category", "Product category"]), None)
     if domain_item and domain_item["result"] in ["Mismatch", "Not Applicable"]:
         return 0.0, "Mismatch"
 
-    matches = sum(1 for item in matrix if item["result"] == "Match")
+    matches = sum(1 for item in matrix if item["result"] in ["Match", "Potential Match", "Confirmed Match"])
     total = len(matrix)
 
     core_item = next((item for item in matrix if item["parameter"] == "Core Insulation"), None)
@@ -751,7 +751,7 @@ def ensure_item_provenance_and_scope(item: Dict[str, Any], default_ver_status: s
     if not item or not isinstance(item, dict):
         return item
     
-    item["scope_label"] = "Scope summary from locally indexed metadata — official document verification required."
+    item["scope_label"] = "Scope summary from local catalogue — official document verification required."
     
     ver_status = item.get("verification_status") or default_ver_status
     is_verified = (ver_status in ["Verified", "Verified by Official Gazette"])
@@ -766,7 +766,7 @@ def ensure_item_provenance_and_scope(item: Dict[str, Any], default_ver_status: s
     now_iso = item.get("retrieved_at") or datetime.now(timezone.utc).isoformat()
     src_type = "Official Document Record" if is_verified else "Local Metadata Index"
     
-    ev_text = item.get("evidence_text") or item.get("reasoning") or (item["evidence"][0] if item.get("evidence") else "Scope summary from locally indexed metadata — official document verification required.")
+    ev_text = item.get("evidence_text") or item.get("reasoning") or (item["evidence"][0] if item.get("evidence") else "Scope summary from local catalogue — official document verification required.")
     
     prov = item.get("provenance") or {}
     prov["source_type"] = src_type

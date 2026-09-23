@@ -417,6 +417,61 @@ class IndianStandard(Base):
         default="Active",
     )
 
+    canonical_standard_number = Column(
+        String(100),
+        unique=True,
+        index=True,
+        nullable=True,
+    )
+
+    base_standard_number = Column(
+        String(50),
+        index=True,
+        nullable=True,
+    )
+
+    part_number = Column(
+        String(50),
+        nullable=True,
+    )
+
+    revision_year = Column(
+        String(20),
+        nullable=True,
+    )
+
+    source_type = Column(
+        String(50),
+        nullable=True,
+        default="Local Metadata Index",
+    )
+
+    source_document = Column(
+        String(255),
+        nullable=True,
+    )
+
+    source_document_hash = Column(
+        String(64),
+        nullable=True,
+    )
+
+    verified_at = Column(
+        DateTime,
+        nullable=True,
+    )
+
+    verified_by = Column(
+        String(100),
+        nullable=True,
+    )
+
+    evidence_confidence = Column(
+        String(50),
+        nullable=True,
+        default="Medium",
+    )
+
     source_url = Column(
         String(500),
         nullable=True,
@@ -453,6 +508,39 @@ class IndianStandard(Base):
         String(100),
         nullable=True,
         default="Verification Required",
+    )
+
+    embedding_status = Column(
+        String(50),
+        nullable=True,
+        default="pending",
+    )
+
+    last_embedded_at = Column(
+        DateTime,
+        nullable=True,
+    )
+
+    indexed_content_hash = Column(
+        String(64),
+        nullable=True,
+    )
+
+    embedding_error = Column(
+        Text,
+        nullable=True,
+    )
+
+    needs_reindex = Column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
+    embedding_version = Column(
+        String(20),
+        default="v1.0",
+        nullable=True,
     )
 
     last_updated = Column(
@@ -655,6 +743,56 @@ class CertificationRequirement(Base):
 
     verification_status = Column(
         String(100),
+        nullable=True,
+    )
+
+    notification_number = Column(
+        String(100),
+        nullable=True,
+    )
+
+    issuing_authority = Column(
+        String(150),
+        nullable=True,
+    )
+
+    notification_date = Column(
+        String(50),
+        nullable=True,
+    )
+
+    effective_date = Column(
+        String(50),
+        nullable=True,
+    )
+
+    product_scope = Column(
+        Text,
+        nullable=True,
+    )
+
+    applicable_standard = Column(
+        String(100),
+        nullable=True,
+    )
+
+    official_document_url = Column(
+        String(500),
+        nullable=True,
+    )
+
+    evidence_text = Column(
+        Text,
+        nullable=True,
+    )
+
+    page_or_clause_reference = Column(
+        String(100),
+        nullable=True,
+    )
+
+    verified_at = Column(
+        DateTime,
         nullable=True,
     )
 

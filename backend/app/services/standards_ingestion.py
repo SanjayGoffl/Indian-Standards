@@ -70,9 +70,16 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
             continue
 
         std_number = item["standard_number"].strip()
+        canonical_num = item.get("canonical_standard_number") or std_number
+        base_num = item.get("base_standard_number")
+        part_num = item.get("part_number")
+        revision_yr = item.get("revision_year")
         new_hash = item.get("content_hash") or compute_content_hash(item)
 
-        existing = db.query(IndianStandard).filter(IndianStandard.standard_number == std_number).first()
+        existing = db.query(IndianStandard).filter(
+            (IndianStandard.standard_number == std_number) |
+            (IndianStandard.canonical_standard_number == canonical_num)
+        ).first()
 
         needs_vector_update = False
         is_new = False
@@ -80,6 +87,10 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
         if not existing:
             standard = IndianStandard(
                 standard_number=std_number,
+                canonical_standard_number=canonical_num,
+                base_standard_number=base_num,
+                part_number=part_num,
+                revision_year=revision_yr,
                 title=item.get("title", "Untitled Standard"),
                 scope=item.get("scope", ""),
                 technical_requirements=item.get("technical_requirements", ""),
@@ -90,11 +101,14 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
                 amendment_details=item.get("amendment_information") or item.get("amendment_details"),
                 status=item.get("status", "Active"),
                 source=item.get("source", source_name),
+                source_type=item.get("source_type", "Local Metadata Index"),
                 source_url=item.get("source_url"),
                 retrieved_at=item.get("retrieved_at"),
                 verification_status=item.get("verification_status", "Verification Required"),
                 evidence_text=item.get("evidence_text") or item.get("scope", ""),
                 content_hash=new_hash,
+                embedding_status="pending",
+                needs_reindex=True,
             )
             db.add(standard)
             db.flush()
@@ -103,8 +117,13 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
             is_new = True
             needs_vector_update = True
         else:
-            # Change detection using content_hash
-            if existing.content_hash != new_hash:
+            # Change detection using content_hash or missing embedding
+            if existing.content_hash != new_hash or existing.embedding_status != "indexed" or existing.needs_reindex:
+                existing.standard_number = std_number
+                existing.canonical_standard_number = canonical_num
+                existing.base_standard_number = base_num
+                existing.part_number = part_num
+                existing.revision_year = revision_yr
                 existing.title = item.get("title", existing.title)
                 existing.scope = item.get("scope", existing.scope)
                 existing.technical_requirements = item.get("technical_requirements", existing.technical_requirements)
@@ -114,11 +133,13 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
                 existing.revision = item.get("revision_year", existing.revision)
                 existing.amendment_details = item.get("amendment_information", existing.amendment_details)
                 existing.status = item.get("status", existing.status)
+                existing.source_type = item.get("source_type", existing.source_type or "Local Metadata Index")
                 existing.source_url = item.get("source_url", existing.source_url)
                 existing.retrieved_at = item.get("retrieved_at", existing.retrieved_at)
                 existing.verification_status = item.get("verification_status", existing.verification_status)
                 existing.evidence_text = item.get("evidence_text", existing.evidence_text)
                 existing.content_hash = new_hash
+                existing.needs_reindex = True
 
                 standard_map[std_number] = existing
                 updated_count += 1
@@ -144,13 +165,19 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
                     certification_type=cert_type,
                     applicability=cert.get("applicability", "Mandatory"),
                     source_url=cert.get("source_url"),
-                    verification_status=cert.get("verification_status", "Verification Required")
+                    verification_status=cert.get("verification_status", "Verification Required"),
+                    notification_number=cert.get("notification_number"),
+                    issuing_authority=cert.get("issuing_authority"),
+                    notification_date=cert.get("notification_date"),
+                    effective_date=cert.get("effective_date"),
+                    product_scope=cert.get("product_scope"),
+                    evidence_text=cert.get("evidence_text")
                 )
                 db.add(cert_obj)
         db.commit()
 
         # Update ChromaDB vector index strictly if new or updated
-        if needs_vector_update and collection is not None:
+        if needs_vector_update:
             text_for_embedding = (
                 f"Standard Number: {std_number}\n"
                 f"Title: {item.get('title', '')}\n"
@@ -160,26 +187,44 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
                 f"Technical Specifications: {item.get('technical_requirements', '')}"
             )
             doc_id = std_number.replace(" ", "_").replace("/", "_").replace(":", "_")
-            try:
-                collection.upsert(
-                    documents=[text_for_embedding],
-                    metadatas=[{
-                        "standard_number": std_number,
-                        "title": item.get("title", ""),
-                        "category": item.get("product_category") or item.get("category", ""),
-                        "sector": item.get("sector", ""),
-                        "revision": item.get("revision_year") or item.get("revision", ""),
-                        "status": item.get("status", "Active"),
-                        "content_hash": new_hash
-                    }],
-                    ids=[doc_id]
-                )
-                if is_new:
-                    embeddings_created += 1
-                else:
-                    embeddings_updated += 1
-            except Exception as e:
-                logger.warning(f"ChromaDB upsert failed for {std_number}: {str(e)}")
+            if collection is not None:
+                try:
+                    collection.upsert(
+                        documents=[text_for_embedding],
+                        metadatas=[{
+                            "standard_number": std_number,
+                            "canonical_standard_number": canonical_num,
+                            "title": item.get("title", ""),
+                            "category": item.get("product_category") or item.get("category", ""),
+                            "sector": item.get("sector", ""),
+                            "revision": item.get("revision_year") or item.get("revision", ""),
+                            "status": item.get("status", "Active"),
+                            "content_hash": new_hash
+                        }],
+                        ids=[doc_id]
+                    )
+                    std_obj.embedding_status = "indexed"
+                    std_obj.indexed_content_hash = new_hash
+                    std_obj.last_embedded_at = datetime.now(timezone.utc)
+                    std_obj.needs_reindex = False
+                    std_obj.embedding_error = None
+                    db.commit()
+
+                    if is_new:
+                        embeddings_created += 1
+                    else:
+                        embeddings_updated += 1
+                except Exception as e:
+                    logger.warning(f"ChromaDB upsert failed for {std_number}: {str(e)}")
+                    std_obj.embedding_status = "failed"
+                    std_obj.needs_reindex = True
+                    std_obj.embedding_error = str(e)
+                    db.commit()
+            else:
+                std_obj.embedding_status = "failed"
+                std_obj.needs_reindex = True
+                std_obj.embedding_error = "ChromaDB vector collection is unavailable"
+                db.commit()
 
     # Sync Relationships
     for item in records:
@@ -283,3 +328,69 @@ def get_ingestion_logs(db: Session) -> List[Dict[str, Any]]:
             "error_summary": l.error_summary,
         })
     return results
+
+
+def reindex_pending_embeddings(db: Session) -> Dict[str, Any]:
+    """
+    Service to retry vector embedding generation for standards marked with needs_reindex=True or embedding_status != 'indexed'.
+    """
+    pending = db.query(IndianStandard).filter(
+        (IndianStandard.needs_reindex == True) | (IndianStandard.embedding_status != "indexed")
+    ).all()
+
+    if not pending:
+        return {"reindexed_count": 0, "failed_count": 0, "message": "No pending embeddings to reindex."}
+
+    collection = None
+    try:
+        collection = chroma_service.get_or_create_collection("indian_standards_kb")
+    except Exception as e:
+        return {"reindexed_count": 0, "failed_count": len(pending), "error": f"ChromaDB connection error: {str(e)}"}
+
+    reindexed = 0
+    failed = 0
+
+    for std in pending:
+        text_for_embedding = (
+            f"Standard Number: {std.standard_number}\n"
+            f"Title: {std.title}\n"
+            f"Category: {std.category}\n"
+            f"Sector: {std.sector or ''}\n"
+            f"Scope: {std.scope or ''}\n"
+            f"Technical Specifications: {std.technical_requirements or ''}"
+        )
+        doc_id = std.standard_number.replace(" ", "_").replace("/", "_").replace(":", "_")
+        try:
+            collection.upsert(
+                documents=[text_for_embedding],
+                metadatas=[{
+                    "standard_number": std.standard_number,
+                    "canonical_standard_number": std.canonical_standard_number or std.standard_number,
+                    "title": std.title,
+                    "category": std.category,
+                    "sector": std.sector or "",
+                    "revision": std.revision or "",
+                    "status": std.status,
+                    "content_hash": std.content_hash or ""
+                }],
+                ids=[doc_id]
+            )
+            std.embedding_status = "indexed"
+            std.indexed_content_hash = std.content_hash
+            std.last_embedded_at = datetime.now(timezone.utc)
+            std.needs_reindex = False
+            std.embedding_error = None
+            reindexed += 1
+        except Exception as e:
+            logger.warning(f"Re-index failed for {std.standard_number}: {str(e)}")
+            std.embedding_status = "failed"
+            std.needs_reindex = True
+            std.embedding_error = str(e)
+            failed += 1
+
+    db.commit()
+    return {
+        "reindexed_count": reindexed,
+        "failed_count": failed,
+        "total_attempted": len(pending)
+    }

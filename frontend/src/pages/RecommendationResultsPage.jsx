@@ -292,23 +292,40 @@ export default function RecommendationResultsPage({ requestId, onBack }) {
                 return (
                   <div key={idx} className="report-card" style={{ border: '1px solid #cbd5e1', borderRadius: '10px', overflow: 'hidden', background: '#ffffff', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
                     
-                    {/* Card Header */}
+                    {/* Card Header with Distinct Field Formatting */}
                     <div style={{ background: '#f8fafc', padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: '1.2rem', fontWeight: '800', color: '#1e293b' }}>
-                          {std.standard_number}
-                        </span>
-                        <span style={{ fontSize: '0.8rem', fontWeight: '700', padding: '4px 10px', borderRadius: '12px', ...badgeStyle }}>
-                          {std.applicability_status}
-                        </span>
-                        {std.revision_verification_status && (
-                          <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px', background: std.revision_verification_status === 'Verified' ? '#dcfce7' : '#fff7ed', color: std.revision_verification_status === 'Verified' ? '#15803d' : '#c2410c', border: std.revision_verification_status === 'Verified' ? '1px solid #86efac' : '1px solid #fed7aa', fontWeight: '600' }}>
-                            Revision: {std.revision_verification_status}
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Standard</span>
+                          <span style={{ fontSize: '1.15rem', fontWeight: '800', color: '#1e293b' }}>
+                            {std.standard_number}
                           </span>
-                        )}
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Applicability</span>
+                          <span style={{ fontSize: '0.8rem', fontWeight: '700', padding: '4px 10px', borderRadius: '12px', ...badgeStyle }}>
+                            {std.applicability_status}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Revision</span>
+                          <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', background: std.revision_verification_status === 'Verified' ? '#dcfce7' : '#fff7ed', color: std.revision_verification_status === 'Verified' ? '#15803d' : '#c2410c', border: std.revision_verification_status === 'Verified' ? '1px solid #86efac' : '1px solid #fed7aa', fontWeight: '600' }}>
+                            {std.revision_verification_status || 'Unverified'}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Verification</span>
+                          <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', background: std.verification_status === 'Verified' ? '#dcfce7' : '#fef3c7', color: std.verification_status === 'Verified' ? '#15803d' : '#b45309', border: std.verification_status === 'Verified' ? '1px solid #86efac' : '1px solid #fde68a', fontWeight: '600' }}>
+                            {std.verification_status || 'Required'}
+                          </span>
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#ffffff', border: '1px solid #e2e8f0', padding: '6px 12px', borderRadius: '8px' }}>
-                        <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Internal Match Score:</span>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#ffffff', border: '1px solid #e2e8f0', padding: '6px 12px', borderRadius: '8px' }}>
+                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '600' }}>Internal Retrieval Score:</span>
                         <span style={{ fontWeight: '800', fontSize: '0.9rem', color: '#2563eb' }}>{scoreVal.toFixed(2)}</span>
                         <span style={{ fontSize: '0.75rem', background: scoreVal >= 0.8 ? '#dcfce7' : (scoreVal >= 0.5 ? '#eff6ff' : '#fef3c7'), color: scoreVal >= 0.8 ? '#15803d' : (scoreVal >= 0.5 ? '#1d4ed8' : '#b45309'), padding: '2px 6px', borderRadius: '4px', fontWeight: '600' }}>
                           {std.match_strength || 'Medium'} Match

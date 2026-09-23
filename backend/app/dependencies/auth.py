@@ -92,3 +92,25 @@ def get_current_user(
         )
 
     return user
+
+
+def get_admin_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """
+    Ensure the currently authenticated user is an active administrator.
+    Raises 403 Forbidden for non-admin users.
+    """
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been blocked by an administrator.",
+        )
+
+    if (current_user.role or "").lower() != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrative privileges required.",
+        )
+
+    return current_user

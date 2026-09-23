@@ -17,6 +17,48 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+import re
+
+def parse_standard_number(raw_num: str) -> Dict[str, Optional[str]]:
+    """
+    Parses raw standard identifier into canonical components.
+    e.g. 'IS 7098 (Part 1):1988' -> base: 'IS 7098', part: 'Part 1', year: '1988', canonical: 'IS 7098 (Part 1):1988'
+    """
+    raw_num = (raw_num or "").strip()
+    if not raw_num:
+        return {
+            "raw_standard_number": "",
+            "canonical_standard_number": "",
+            "base_standard_number": "",
+            "part_number": None,
+            "revision_year": None
+        }
+
+    base_match = re.search(r"\bIS\s*(\d+)", raw_num, re.IGNORECASE)
+    base_num_str = f"IS {base_match.group(1)}" if base_match else raw_num.split()[0]
+
+    part_match = re.search(r"\(?\bPart\s*(\d+)\)?", raw_num, re.IGNORECASE)
+    part_str = f"Part {part_match.group(1)}" if part_match else None
+
+    year_match = re.search(r":?\b(19\d{2}|20\d{2})\b", raw_num)
+    year_str = year_match.group(1) if year_match else None
+
+    parts = [base_num_str]
+    if part_str:
+        parts.append(f"({part_str})")
+    canonical = " ".join(parts)
+    if year_str:
+        canonical += f":{year_str}"
+
+    return {
+        "raw_standard_number": raw_num,
+        "canonical_standard_number": canonical,
+        "base_standard_number": base_num_str,
+        "part_number": part_str,
+        "revision_year": year_str
+    }
+
+
 def compute_content_hash(record: Dict[str, Any]) -> str:
     """
     Computes deterministic SHA-256 content hash across standardized fields.
@@ -38,26 +80,34 @@ def compute_content_hash(record: Dict[str, Any]) -> str:
 
 def normalize_bis_record(raw: Dict[str, Any], default_source: str = "Authorized Local Import") -> Dict[str, Any]:
     """
-    Normalizes a raw dictionary record into the standard 15-field schema.
+    Normalizes a raw dictionary record into the standard 15-field schema + canonical identifier attributes.
     """
     now_iso = datetime.now(timezone.utc).isoformat()
 
     std_num = (raw.get("standard_number") or raw.get("standard_no") or raw.get("is_number") or "").strip()
+    parsed_id = parse_standard_number(std_num)
+
     title = (raw.get("title") or raw.get("standard_title") or "Untitled Standard").strip()
     scope = (raw.get("scope") or raw.get("description") or "").strip()
     tech_reqs = (raw.get("technical_requirements") or raw.get("specifications") or "").strip()
     category = (raw.get("product_category") or raw.get("category") or "General").strip()
     sector = (raw.get("sector") or "General Sector").strip()
-    revision_year = str(raw.get("revision_year") or raw.get("revision") or raw.get("publication_date") or "").strip()
+    revision_year = str(raw.get("revision_year") or parsed_id["revision_year"] or raw.get("revision") or raw.get("publication_date") or "").strip()
     amendment_info = str(raw.get("amendment_information") or raw.get("amendment_details") or "").strip()
     status = (raw.get("status") or "Active").strip()
     source_name = (raw.get("source") or default_source).strip()
+    source_type = (raw.get("source_type") or ("Local Metadata Index" if "Mock" in source_name or "Local" in source_name else "Official Document Record")).strip()
     source_url = (raw.get("source_url") or "").strip()
+    evidence_text = (raw.get("evidence_text") or scope or "").strip()
     retrieved_at = (raw.get("retrieved_at") or now_iso).strip()
     verification_status = (raw.get("verification_status") or "Verification Required").strip()
 
     partial_record = {
         "standard_number": std_num,
+        "raw_standard_number": parsed_id["raw_standard_number"],
+        "canonical_standard_number": parsed_id["canonical_standard_number"],
+        "base_standard_number": parsed_id["base_standard_number"],
+        "part_number": parsed_id["part_number"],
         "title": title,
         "scope": scope,
         "technical_requirements": tech_reqs,
@@ -67,9 +117,13 @@ def normalize_bis_record(raw: Dict[str, Any], default_source: str = "Authorized 
         "amendment_information": amendment_info,
         "status": status,
         "source": source_name,
+        "source_type": source_type,
         "source_url": source_url,
+        "evidence_text": evidence_text,
         "retrieved_at": retrieved_at,
         "verification_status": verification_status,
+        "certifications": raw.get("certifications", []),
+        "relationships": raw.get("relationships", [])
     }
 
     content_hash = compute_content_hash(partial_record)
