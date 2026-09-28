@@ -364,9 +364,8 @@ def delete_document_as_admin(db: Session, document_id: str) -> None:
 
     db.delete(document)
     db.commit()
-    # NOTE: PostgreSQL record only - check with Subhiksha about also
-    # cleaning up the matching ChromaDB vectors, same as the normal
-    # user-facing delete endpoint does.
+    # NOTE: PostgreSQL record only - also clean up the matching ChromaDB
+    # vectors if necessary, same as the user-facing delete endpoint does.
 
 
 def get_queries_per_user(db: Session) -> list[QueriesPerUser]:

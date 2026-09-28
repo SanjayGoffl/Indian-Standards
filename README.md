@@ -296,10 +296,9 @@ python backend/scratch/test_all_scenarios.py
 
 ---
 
-## 👥 Authors & Maintainers
+## 👤 Author & Maintainer
 
 * **Sanjay** ([@SanjayGoffl](https://github.com/SanjayGoffl))
-* **Subhiksha** ([@Subhiksha212](https://github.com/Subhiksha212))
 
 ---
 
