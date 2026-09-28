@@ -1,132 +1,176 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as api from '../services/api';
+import { EmptyState, ErrorState, LoadingState, StatTile } from '../components/UiStates';
+import RequestsTable from '../components/RequestsTable';
+import './StandardsUI.css';
 
+/*
+ * History & Analytics — the user's analysis history plus usage analytics
+ * from GET /api/analytics/summary. `monthly_usage` from that endpoint is
+ * derived from the total (not real per-month history), so it is not shown.
+ */
 export default function HistoryPage({ onViewReport }) {
   const [requests, setRequests] = useState([]);
+  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [error, setError] = useState('');
 
-  const fetchHistory = async () => {
-    try {
-      setLoading(true);
-      const data = await api.getUserProcurementRequests();
-      setRequests(data.requests || []);
-    } catch (err) {
-      console.error("Fetch history error:", err);
-      setError("Failed to load procurement analysis history.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+  const [deleteError, setDeleteError] = useState(null);
 
-  useEffect(() => {
-    fetchHistory();
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const [reqRes, sumRes] = await Promise.allSettled([
+      api.getUserProcurementRequests(),
+      api.getProcurementAnalyticsSummary(),
+    ]);
+    if (reqRes.status === 'fulfilled') setRequests(reqRes.value?.requests || []);
+    else setError(reqRes.reason);
+    setSummary(sumRes.status === 'fulfilled' ? sumRes.value : null);
+    setLoading(false);
   }, []);
 
-  const handleDelete = async (requestId, e) => {
-    e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this procurement analysis record?")) return;
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const confirmDelete = async () => {
+    const req = pendingDelete;
+    setPendingDelete(null);
+    setDeletingId(req.id);
+    setDeleteError(null);
     try {
-      await api.deleteProcurementRequest(requestId);
-      setRequests((prev) => prev.filter((r) => r.id !== requestId));
+      await api.deleteProcurementRequest(req.id);
+      setRequests((prev) => prev.filter((r) => r.id !== req.id));
+      api.getProcurementAnalyticsSummary().then(setSummary).catch(() => {});
     } catch (err) {
-      alert("Failed to delete record: " + err.message);
+      setDeleteError(err);
+    } finally {
+      setDeletingId(null);
     }
   };
 
-  const filteredRequests = requests.filter((r) => {
-    const term = searchTerm.toLowerCase();
-    return (
-      (r.product_category || '').toLowerCase().includes(term) ||
-      (r.summary || '').toLowerCase().includes(term) ||
-      (r.procurement_purpose || '').toLowerCase().includes(term)
+  const filtered = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return requests;
+    return requests.filter((r) =>
+      [r.product_category, r.summary, r.procurement_purpose].some((v) => (v || '').toLowerCase().includes(term)),
     );
-  });
+  }, [requests, searchTerm]);
+
+  const categories = summary?.top_product_categories || [];
+  const topStandards = summary?.commonly_recommended_standards || [];
+  const maxCat = Math.max(1, ...categories.map((c) => c.count || 0));
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1100px', margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ marginBottom: '24px' }}>
-        <h1 style={{ fontSize: '1.6rem', fontWeight: '700', color: '#1e293b', margin: 0 }}>
-          Procurement Specification History
-        </h1>
-        <p style={{ color: '#64748b', fontSize: '0.95rem', marginTop: '6px' }}>
-          View, review, or delete past Indian Standards recommendation reports and technical analyses.
-        </p>
-      </div>
-
-      {/* Search Bar */}
-      <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '16px', marginBottom: '24px' }}>
-        <input
-          type="text"
-          placeholder="Filter history by category, purpose, or keyword..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.95rem', boxSizing: 'border-box' }}
-        />
-      </div>
+    <div className="su-page">
+      <header className="su-header">
+        <div>
+          <h1 className="su-title">History &amp; Analytics</h1>
+          <p className="su-subtitle">Your past specification analyses and what they recommended.</p>
+        </div>
+      </header>
 
       {loading ? (
-        <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>Loading specification history...</div>
-      ) : filteredRequests.length === 0 ? (
-        <div style={{ padding: '40px', textAlign: 'center', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#64748b' }}>
-          No procurement history matching filter.
-        </div>
+        <LoadingState label="Loading history and analytics…" rows={5} />
+      ) : error ? (
+        <ErrorState title="Could not load your analysis history" error={error} onRetry={load} />
+      ) : requests.length === 0 ? (
+        <EmptyState title="No analyses yet" text="Reports you generate from Analyze Tender will appear here with usage analytics." />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {filteredRequests.map((req) => (
-            <div
-              key={req.id}
-              onClick={() => onViewReport(req.id)}
-              style={{
-                background: '#ffffff',
-                border: '1px solid #e2e8f0',
-                borderRadius: '10px',
-                padding: '20px',
-                cursor: 'pointer',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: '16px',
-                transition: 'all 0.2s',
-                boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
-              }}
-            >
-              <div style={{ flex: 1, minWidth: '280px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
-                  <span style={{ background: '#eff6ff', color: '#1d4ed8', fontWeight: '700', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>
-                    {req.product_category || 'General Procurement'}
-                  </span>
-                  <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                    {req.created_at ? new Date(req.created_at).toLocaleString() : ''}
-                  </span>
-                </div>
-                <h3 style={{ margin: '0 0 6px 0', fontSize: '1.05rem', color: '#0f172a' }}>
-                  {req.summary}
-                </h3>
-                {req.procurement_purpose && (
-                  <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
-                    Purpose: {req.procurement_purpose}
-                  </div>
-                )}
-              </div>
+        <>
+          <div className="su-stats" style={{ marginBottom: 16 }}>
+            <StatTile label="Analyses" value={summary?.total_procurement_analyses ?? requests.length} tone="info" />
+            <StatTile label="Standards recommended" value={requests.reduce((n, r) => n + (r.recommended_count || 0), 0)} tone="ok" />
+            <StatTile label="Mandatory certifications" value={summary?.mandatory_certifications_flagged} tone="warn" />
+            <StatTile label="Distinct categories" value={new Set(requests.map((r) => r.product_category).filter(Boolean)).size} />
+          </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ background: '#dcfce7', color: '#15803d', padding: '6px 12px', borderRadius: '20px', fontSize: '0.8rem', fontWeight: '700' }}>
-                  {req.recommended_count} IS Code(s)
-                </span>
-                <button
-                  onClick={(e) => handleDelete(req.id, e)}
-                  style={{ background: '#fef2f2', color: '#ef4444', border: '1px solid #fca5a5', padding: '6px 10px', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer' }}
-                >
-                  Delete
-                </button>
+          {summary && (categories.length > 0 || topStandards.length > 0) && (
+            <div className="su-split" style={{ marginBottom: 24 }}>
+              <div className="su-card">
+                <div className="su-rec-label">Top product categories</div>
+                {categories.length ? (
+                  <ul className="su-bars">
+                    {categories.map((c) => (
+                      <li key={c.category}>
+                        <div className="su-bars-row">
+                          <span>{c.category}</span>
+                          <span className="su-mono">{c.count}</span>
+                        </div>
+                        <div className="su-score-bar"><div style={{ width: `${(c.count / maxCat) * 100}%` }} /></div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="su-muted" style={{ fontSize: '0.84rem' }}>No category data yet.</p>}
+              </div>
+              <div className="su-card">
+                <div className="su-rec-label">Most recommended standards</div>
+                {topStandards.length ? (
+                  <table className="su-table" style={{ fontSize: '0.82rem' }}>
+                    <tbody>
+                      {topStandards.map((s) => (
+                        <tr key={s.standard_number}>
+                          <td className="su-code" style={{ whiteSpace: 'nowrap', paddingLeft: 0 }}>{s.standard_number}</td>
+                          <td>{s.title}</td>
+                          <td className="su-num">{s.count}×</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : <p className="su-muted" style={{ fontSize: '0.84rem' }}>No recommendations yet.</p>}
               </div>
             </div>
-          ))}
-        </div>
+          )}
+
+          <section className="su-section">
+            <div className="su-toolbar">
+              <input
+                type="search"
+                className="su-input su-input--search"
+                placeholder="Filter by category, purpose or keyword"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                aria-label="Filter history"
+              />
+              <span className="su-section-meta">
+                {filtered.length} of {requests.length} analyses
+              </span>
+            </div>
+
+            {pendingDelete && (
+              <div className="su-confirm" style={{ marginBottom: 12 }}>
+                Delete the analysis “{(pendingDelete.summary || pendingDelete.product_category || pendingDelete.id).slice(0, 80)}”? This cannot be undone.
+                <div className="su-control-row">
+                  <button type="button" className="su-btn su-btn--danger" onClick={confirmDelete}>Delete</button>
+                  <button type="button" className="su-btn su-btn--secondary" onClick={() => setPendingDelete(null)}>Cancel</button>
+                </div>
+              </div>
+            )}
+            {deleteError && (
+              <div className="su-notice su-notice--danger" style={{ marginBottom: 12 }}>
+                <strong>Delete failed</strong>{deleteError.message}
+              </div>
+            )}
+
+            {filtered.length === 0 ? (
+              <EmptyState
+                title="No analyses match this filter"
+                action={<button type="button" className="su-btn su-btn--secondary" onClick={() => setSearchTerm('')}>Clear filter</button>}
+              />
+            ) : (
+              <RequestsTable
+                requests={filtered}
+                onOpen={onViewReport}
+                onDelete={setPendingDelete}
+                deletingId={deletingId}
+              />
+            )}
+          </section>
+        </>
       )}
     </div>
   );

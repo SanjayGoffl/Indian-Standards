@@ -1,170 +1,150 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
-export default function Sidebar({
-  activeTab,
-  setActiveTab,
-  user,
-  onLogout,
-}) {
-  const [profileOpen, setProfileOpen] = useState(false);
+const NAV_ITEMS = [
+  {
+    tab: 'dashboard',
+    label: 'Dashboard',
+    icon: (
+      <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
+        <rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.4" />
+        <rect x="9.5" y="1.5" width="6" height="9" rx="1" stroke="currentColor" strokeWidth="1.4" />
+        <rect x="1.5" y="9.5" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      </svg>
+    ),
+  },
+  {
+    tab: 'new-recommendation',
+    label: 'Analyze Tender',
+    icon: (
+      <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
+        <path d="M3 1.5h7l4 4v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        <path d="M10 1.5v4h4" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        <path d="M4.5 9.5h6M4.5 12h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    tab: 'standards',
+    label: 'Standards',
+    icon: (
+      <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
+        <path d="M2 3a1 1 0 0 1 1-1h4.5v13H3a1 1 0 0 1-1-1V3Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        <path d="M15 3a1 1 0 0 0-1-1H9.5v13H14a1 1 0 0 0 1-1V3Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    tab: 'history',
+    label: 'History & Analytics',
+    // Analytics was merged into the history page; keep its tab highlighted here.
+    aliases: ['analytics', 'results'],
+    icon: (
+      <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
+        <circle cx="8.5" cy="8.5" r="6.5" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M8.5 5v3.7l2.6 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+];
 
-  const getInitial = () => {
-    return (
-      user?.full_name?.charAt(0) ||
-      user?.email?.charAt(0) ||
-      'U'
-    ).toUpperCase();
+export default function Sidebar({ activeTab, setActiveTab, user, onLogout }) {
+  const isAdmin = (user?.role || '').toLowerCase() === 'admin';
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  const initial = (user?.full_name?.charAt(0) || user?.email?.charAt(0) || 'U').toUpperCase();
+
+  const go = (tab) => {
+    setActiveTab(tab);
+    setMenuOpen(false);
   };
 
   return (
-    <aside className="sidebar" style={{ width: '260px', background: '#0f172a', color: '#f8fafc', height: '100vh', display: 'flex', flexDirection: 'column', padding: '20px 16px', boxSizing: 'border-box' }}>
-      
-      {/* Brand Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '32px', paddingBottom: '16px', borderBottom: '1px solid #334155' }}>
-        <div style={{ width: '38px', height: '38px', background: 'linear-gradient(135deg, #2563eb, #1d4ed8)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem' }}>
-          🇮🇳
-        </div>
+    <aside className="ledger-sidebar">
+      <div className="ledger-brand">
+        <div className="ledger-brand-mark">IS</div>
         <div>
-          <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#ffffff', margin: 0, letterSpacing: '-0.01em' }}>
-            IS Procurement AI
-          </h2>
-          <span style={{ fontSize: '0.68rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            BIS Standards Engine
-          </span>
+          <h2 className="ledger-brand-title">Standards Engine</h2>
+          <span className="ledger-brand-sub">BIS procurement advisor</span>
         </div>
       </div>
 
-      {/* Navigation Links */}
-      <nav style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
-        <button
-          onClick={() => setActiveTab('dashboard')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            width: '100%',
-            padding: '12px 14px',
-            borderRadius: '8px',
-            border: 'none',
-            background: activeTab === 'dashboard' ? '#2563eb' : 'transparent',
-            color: activeTab === 'dashboard' ? '#ffffff' : '#cbd5e1',
-            fontWeight: activeTab === 'dashboard' ? '700' : '500',
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontSize: '0.9rem'
-          }}
-        >
-          <span>📊</span> Dashboard
-        </button>
-
-        <button
-          onClick={() => setActiveTab('new-recommendation')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            width: '100%',
-            padding: '12px 14px',
-            borderRadius: '8px',
-            border: 'none',
-            background: activeTab === 'new-recommendation' ? '#2563eb' : 'transparent',
-            color: activeTab === 'new-recommendation' ? '#ffffff' : '#cbd5e1',
-            fontWeight: activeTab === 'new-recommendation' ? '700' : '500',
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontSize: '0.9rem'
-          }}
-        >
-          <span>📝</span> New Specification Analysis
-        </button>
-
-        <button
-          onClick={() => setActiveTab('standards')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            width: '100%',
-            padding: '12px 14px',
-            borderRadius: '8px',
-            border: 'none',
-            background: activeTab === 'standards' ? '#2563eb' : 'transparent',
-            color: activeTab === 'standards' ? '#ffffff' : '#cbd5e1',
-            fontWeight: activeTab === 'standards' ? '700' : '500',
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontSize: '0.9rem'
-          }}
-        >
-          <span>📚</span> BIS Standards Catalog
-        </button>
-
-        <button
-          onClick={() => setActiveTab('history')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            width: '100%',
-            padding: '12px 14px',
-            borderRadius: '8px',
-            border: 'none',
-            background: activeTab === 'history' ? '#2563eb' : 'transparent',
-            color: activeTab === 'history' ? '#ffffff' : '#cbd5e1',
-            fontWeight: activeTab === 'history' ? '700' : '500',
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontSize: '0.9rem'
-          }}
-        >
-          <span>📜</span> Analysis History
-        </button>
-
-        <button
-          onClick={() => setActiveTab('analytics')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            width: '100%',
-            padding: '12px 14px',
-            borderRadius: '8px',
-            border: 'none',
-            background: activeTab === 'analytics' ? '#2563eb' : 'transparent',
-            color: activeTab === 'analytics' ? '#ffffff' : '#cbd5e1',
-            fontWeight: activeTab === 'analytics' ? '700' : '500',
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontSize: '0.9rem'
-          }}
-        >
-          <span>📈</span> Procurement Analytics
-        </button>
+      <nav className="ledger-nav" aria-label="Main">
+        {NAV_ITEMS.map((item) => {
+          const active = activeTab === item.tab || item.aliases?.includes(activeTab);
+          return (
+            <button
+              key={item.tab}
+              type="button"
+              onClick={() => go(item.tab)}
+              className={`ledger-nav-item${active ? ' is-active' : ''}`}
+              aria-current={active ? 'page' : undefined}
+              title={item.label}
+            >
+              <span className="ledger-nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+            </button>
+          );
+        })}
       </nav>
 
-      {/* User Profile & Sign Out */}
       {user && (
-        <div style={{ borderTop: '1px solid #334155', paddingTop: '16px', marginTop: 'auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#3b82f6', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '0.85rem' }}>
-                {getInitial()}
+        <div className="user-menu" ref={menuRef}>
+          {menuOpen && (
+            <div className="user-menu-panel" role="menu">
+              <div className="user-menu-head">
+                <strong>{user.full_name || 'Signed in'}</strong>
+                <span>{user.email}</span>
+                <span>Role: {user.role || 'User'}</span>
               </div>
-              <div style={{ overflow: 'hidden' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: '600', color: '#ffffff', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-                  {user.full_name}
-                </div>
-                <div style={{ fontSize: '0.72rem', color: '#94a3b8', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-                  {user.email}
-                </div>
-              </div>
+              {isAdmin && (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={`user-menu-item${activeTab === 'admin-standards' ? ' is-active' : ''}`}
+                    onClick={() => go('admin-standards')}
+                  >
+                    Admin · Standards ingestion
+                  </button>
+                  <div className="user-menu-divider" />
+                </>
+              )}
+              <button type="button" role="menuitem" className="user-menu-item user-menu-item--danger" onClick={onLogout}>
+                Sign out
+              </button>
             </div>
-          </div>
+          )}
           <button
-            onClick={onLogout}
-            style={{ width: '100%', background: '#1e293b', color: '#f8fafc', border: '1px solid #334155', padding: '8px', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer', marginTop: '6px' }}
+            type="button"
+            className="user-menu-trigger"
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title="Account"
           >
-            Sign Out
+            <span className="user-avatar">{initial}</span>
+            <span className="user-info">
+              <span className="user-name" style={{ display: 'block' }}>{user.full_name || user.email}</span>
+              <span className="user-role">{isAdmin ? 'Administrator' : 'Procurement user'}</span>
+            </span>
+            <svg className="user-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <path d="M3 7.5 6 4.5l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         </div>
       )}

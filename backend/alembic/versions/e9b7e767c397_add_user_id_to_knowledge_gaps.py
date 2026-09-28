@@ -39,22 +39,24 @@ def upgrade() -> None:
     )
 
     # Add the foreign-key constraint after the column exists.
-    op.create_foreign_key(
-        "fk_knowledge_gaps_user_id_users",
-        "knowledge_gaps",
-        "users",
-        ["user_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
+    # SQLite can't ALTER a table to add a constraint directly, so batch
+    # mode is required (it recreates the table under the hood).
+    with op.batch_alter_table("knowledge_gaps") as batch_op:
+        batch_op.create_foreign_key(
+            "fk_knowledge_gaps_user_id_users",
+            "users",
+            ["user_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "fk_knowledge_gaps_user_id_users",
-        "knowledge_gaps",
-        type_="foreignkey",
-    )
+    with op.batch_alter_table("knowledge_gaps") as batch_op:
+        batch_op.drop_constraint(
+            "fk_knowledge_gaps_user_id_users",
+            type_="foreignkey",
+        )
 
     op.drop_index(
         "ix_knowledge_gaps_user_id",

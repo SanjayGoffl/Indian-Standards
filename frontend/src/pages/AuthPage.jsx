@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import robotLogo from '../assets/hero.jpg';
 import './AuthPage.css';
 
 import { useAuth } from '../context/Authcontext';
@@ -8,6 +7,8 @@ import { useAuth } from '../context/Authcontext';
 export default function AuthPage({
   onLoginSuccess,
   onNavigateToWorkspace,
+  initialTab = 'login',
+  onBack,
 }) {
   const {
     user,
@@ -18,7 +19,7 @@ export default function AuthPage({
   } = useAuth();
 
 
-  const [activeTab, setActiveTab] = useState('login');
+  const [activeTab, setActiveTab] = useState(initialTab);
 
   /* Login form state */
   const [loginEmail, setLoginEmail] = useState('');
@@ -96,7 +97,7 @@ export default function AuthPage({
       return {
         score: 33,
         label: 'Weak',
-        color: '#ff4d4d',
+        color: '#b42318',
       };
     }
 
@@ -104,14 +105,14 @@ export default function AuthPage({
       return {
         score: 66,
         label: 'Medium',
-        color: '#ffb84d',
+        color: '#9a4d00',
       };
     }
 
     return {
       score: 100,
       label: 'Strong',
-      color: '#00e699',
+      color: '#0f7a4a',
     };
   };
 
@@ -317,8 +318,8 @@ export default function AuthPage({
      * Therefore this remains a UI placeholder.
      */
     triggerToast(
-      'success',
-      'Password reset is not yet enabled on the backend.',
+      'error',
+      'Password reset is not available yet. Please contact your administrator.',
     );
 
     setShowForgotModal(false);
@@ -372,13 +373,7 @@ export default function AuthPage({
 
           <div className="auth-header">
 
-            <div className="auth-logo-badge">
-              <img
-                src={robotLogo}
-                alt="IS Procurement AI Logo"
-                className="auth-logo-img"
-              />
-            </div>
+            <div className="auth-logo-badge">IS</div>
 
             <h1 className="auth-title">
               IS Procurement AI
@@ -521,23 +516,23 @@ export default function AuthPage({
 
       <div className="auth-card">
 
+        {onBack && (
+          <button type="button" className="auth-back" onClick={onBack}>
+            ← Back to home
+          </button>
+        )}
+
         {/* Header */}
         <div className="auth-header">
 
-          <div className="auth-logo-badge">
-            <img
-              src={robotLogo}
-              alt="IS Procurement AI Logo"
-              className="auth-logo-img"
-            />
-          </div>
+          <div className="auth-logo-badge">IS</div>
 
           <h1 className="auth-title">
-            IS Procurement AI
+            Standards Engine
           </h1>
 
           <p className="auth-subtitle">
-            AI-Powered Indian Standards Recommendation and Validation Platform for procurement requirements, BIS standards discovery, standards applicability analysis, and compliance guidance.
+            Sign in to analyze tender specifications against Indian Standards.
           </p>
 
         </div>
@@ -696,8 +691,7 @@ export default function AuthPage({
                   }
                 >
                   {showLoginPassword
-                    ? '👁️'
-                    : '🔒'}
+                    ? 'Hide' : 'Show'}
                 </button>
 
               </div>
@@ -892,8 +886,7 @@ export default function AuthPage({
                   }
                 >
                   {showSignupPassword
-                    ? '👁️'
-                    : '🔒'}
+                    ? 'Hide' : 'Show'}
                 </button>
 
               </div>
@@ -1071,7 +1064,7 @@ export default function AuthPage({
                 fontSize: '0.85rem',
                 marginBottom: '20px',
                 color:
-                  'hsl(185, 8%, 58%)',
+                  'var(--text-muted)',
               }}
             >
               Password reset is not currently

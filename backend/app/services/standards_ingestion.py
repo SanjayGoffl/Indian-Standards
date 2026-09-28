@@ -32,25 +32,95 @@ def validate_standard_record(item: Dict[str, Any]) -> Tuple[bool, str]:
     return True, ""
 
 
+INGEST_BATCH_SIZE = 256
+
+
+def _keep(new_value, old_value):
+    """Prefer the incoming value, but never clobber existing data with an empty one."""
+    return new_value if new_value not in (None, "") else old_value
+
+
+def _embedding_text(std_number: str, item: Dict[str, Any]) -> str:
+    return (
+        f"Standard Number: {std_number}\n"
+        f"Title: {item.get('title', '')}\n"
+        f"Category: {item.get('product_category') or item.get('category', '')}\n"
+        f"Sector: {item.get('sector', '')}\n"
+        f"Scope: {item.get('scope', '')}\n"
+        f"Technical Specifications: {item.get('technical_requirements', '')}"
+    )
+
+
+def _flush_vector_batch(db: Session, collection, pending: List[Dict[str, Any]], counters: Dict[str, int]) -> None:
+    """
+    Upserts a batch of vector documents in one call. If the batch fails (e.g. one bad
+    document), retries record-by-record so failures stay isolated to the offending rows.
+    """
+    if not pending:
+        return
+
+    def mark_indexed(entry):
+        std_obj = entry["std_obj"]
+        std_obj.embedding_status = "indexed"
+        std_obj.indexed_content_hash = entry["hash"]
+        std_obj.last_embedded_at = datetime.now(timezone.utc)
+        std_obj.needs_reindex = False
+        std_obj.embedding_error = None
+        counters["embeddings_created" if entry["is_new"] else "embeddings_updated"] += 1
+
+    def mark_failed(entry, error: str):
+        std_obj = entry["std_obj"]
+        std_obj.embedding_status = "failed"
+        std_obj.needs_reindex = True
+        std_obj.embedding_error = error
+
+    if collection is None:
+        for entry in pending:
+            mark_failed(entry, "ChromaDB vector collection is unavailable")
+        db.commit()
+        return
+
+    try:
+        collection.upsert(
+            documents=[e["document"] for e in pending],
+            metadatas=[e["metadata"] for e in pending],
+            ids=[e["doc_id"] for e in pending],
+        )
+        for entry in pending:
+            mark_indexed(entry)
+    except Exception as batch_error:
+        logger.warning(f"ChromaDB batch upsert failed ({batch_error}); retrying {len(pending)} records individually")
+        for entry in pending:
+            try:
+                collection.upsert(documents=[entry["document"]], metadatas=[entry["metadata"]], ids=[entry["doc_id"]])
+                mark_indexed(entry)
+            except Exception as e:
+                logger.warning(f"ChromaDB upsert failed for {entry['std_obj'].standard_number}: {str(e)}")
+                mark_failed(entry, str(e))
+    db.commit()
+
+
 def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str, Any]:
     """
     Ingests standards using a connector interface.
     Applies change detection so only new or modified standards update DB & ChromaDB.
-    Persists IngestionAuditLog in PostgreSQL for administrative governance.
+    DB writes and vector upserts are batched so catalogue-scale sources (tens of
+    thousands of records) ingest in minutes rather than hours.
+    Persists IngestionAuditLog for administrative governance.
     """
     ingestion_id = f"ingest-{uuid.uuid4().hex[:8]}"
     start_dt = datetime.now(timezone.utc)
-    source_meta = connector.get_source_metadata()
-    source_name = source_meta.get("source_type", "Unknown Source")
 
     records = connector.fetch_standards()
+    source_meta = connector.get_source_metadata()
+    source_name = source_meta.get("source_type", "Unknown Source")
 
     new_count = 0
     updated_count = 0
     unchanged_count = 0
     failed_count = 0
-    embeddings_created = 0
-    embeddings_updated = 0
+    duplicate_count = 0
+    counters = {"embeddings_created": 0, "embeddings_updated": 0}
     error_logs: List[str] = []
 
     collection = None
@@ -60,6 +130,9 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
         logger.warning(f"ChromaDB collection initialization warning: {str(e)}")
 
     standard_map: Dict[str, IndianStandard] = {}
+    seen_canonicals = set()
+    pending_vectors: List[Dict[str, Any]] = []
+    processed_since_commit = 0
 
     for item in records:
         is_valid, err_msg = validate_standard_record(item)
@@ -71,6 +144,11 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
 
         std_number = item["standard_number"].strip()
         canonical_num = item.get("canonical_standard_number") or std_number
+
+        if canonical_num in seen_canonicals:
+            duplicate_count += 1
+            continue
+        seen_canonicals.add(canonical_num)
         base_num = item.get("base_standard_number")
         part_num = item.get("part_number")
         revision_yr = item.get("revision_year")
@@ -121,23 +199,29 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
             if existing.content_hash != new_hash or existing.embedding_status != "indexed" or existing.needs_reindex:
                 existing.standard_number = std_number
                 existing.canonical_standard_number = canonical_num
-                existing.base_standard_number = base_num
-                existing.part_number = part_num
-                existing.revision_year = revision_yr
-                existing.title = item.get("title", existing.title)
-                existing.scope = item.get("scope", existing.scope)
-                existing.technical_requirements = item.get("technical_requirements", existing.technical_requirements)
-                existing.category = item.get("product_category") or item.get("category", existing.category)
-                existing.sector = item.get("sector", existing.sector)
-                existing.publication_date = item.get("revision_year", existing.publication_date)
-                existing.revision = item.get("revision_year", existing.revision)
-                existing.amendment_details = item.get("amendment_information", existing.amendment_details)
-                existing.status = item.get("status", existing.status)
-                existing.source_type = item.get("source_type", existing.source_type or "Local Metadata Index")
-                existing.source_url = item.get("source_url", existing.source_url)
-                existing.retrieved_at = item.get("retrieved_at", existing.retrieved_at)
-                existing.verification_status = item.get("verification_status", existing.verification_status)
-                existing.evidence_text = item.get("evidence_text", existing.evidence_text)
+                existing.base_standard_number = _keep(base_num, existing.base_standard_number)
+                existing.part_number = _keep(part_num, existing.part_number)
+                existing.revision_year = _keep(revision_yr, existing.revision_year)
+                existing.title = _keep(item.get("title"), existing.title)
+                existing.scope = _keep(item.get("scope"), existing.scope)
+                existing.technical_requirements = _keep(item.get("technical_requirements"), existing.technical_requirements)
+                # Curated domain categories drive cross-domain exclusion; a generic
+                # placeholder from a metadata-only source must not replace them.
+                incoming_category = item.get("product_category") or item.get("category")
+                if existing.category and existing.category != "General" and item.get("category_is_placeholder"):
+                    incoming_category = None
+                existing.category = _keep(incoming_category, existing.category)
+                incoming_sector = None if (existing.sector and item.get("category_is_placeholder")) else item.get("sector")
+                existing.sector = _keep(incoming_sector, existing.sector)
+                existing.publication_date = _keep(item.get("revision_year"), existing.publication_date)
+                existing.revision = _keep(item.get("revision_year"), existing.revision)
+                existing.amendment_details = _keep(item.get("amendment_information"), existing.amendment_details)
+                existing.status = _keep(item.get("status"), existing.status)
+                existing.source_type = _keep(item.get("source_type"), existing.source_type or "Local Metadata Index")
+                existing.source_url = _keep(item.get("source_url"), existing.source_url)
+                existing.retrieved_at = _keep(item.get("retrieved_at"), existing.retrieved_at)
+                existing.verification_status = _keep(item.get("verification_status"), existing.verification_status)
+                existing.evidence_text = _keep(item.get("evidence_text"), existing.evidence_text)
                 existing.content_hash = new_hash
                 existing.needs_reindex = True
 
@@ -147,8 +231,6 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
             else:
                 standard_map[std_number] = existing
                 unchanged_count += 1
-
-        db.commit()
 
         std_obj = standard_map[std_number]
 
@@ -174,57 +256,46 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
                     evidence_text=cert.get("evidence_text")
                 )
                 db.add(cert_obj)
-        db.commit()
 
-        # Update ChromaDB vector index strictly if new or updated
+        # Queue ChromaDB vector update strictly if new or updated
         if needs_vector_update:
-            text_for_embedding = (
-                f"Standard Number: {std_number}\n"
-                f"Title: {item.get('title', '')}\n"
-                f"Category: {item.get('product_category') or item.get('category', '')}\n"
-                f"Sector: {item.get('sector', '')}\n"
-                f"Scope: {item.get('scope', '')}\n"
-                f"Technical Specifications: {item.get('technical_requirements', '')}"
-            )
-            doc_id = std_number.replace(" ", "_").replace("/", "_").replace(":", "_")
-            if collection is not None:
-                try:
-                    collection.upsert(
-                        documents=[text_for_embedding],
-                        metadatas=[{
-                            "standard_number": std_number,
-                            "canonical_standard_number": canonical_num,
-                            "title": item.get("title", ""),
-                            "category": item.get("product_category") or item.get("category", ""),
-                            "sector": item.get("sector", ""),
-                            "revision": item.get("revision_year") or item.get("revision", ""),
-                            "status": item.get("status", "Active"),
-                            "content_hash": new_hash
-                        }],
-                        ids=[doc_id]
-                    )
-                    std_obj.embedding_status = "indexed"
-                    std_obj.indexed_content_hash = new_hash
-                    std_obj.last_embedded_at = datetime.now(timezone.utc)
-                    std_obj.needs_reindex = False
-                    std_obj.embedding_error = None
-                    db.commit()
+            merged = {
+                "title": std_obj.title,
+                "category": std_obj.category,
+                "sector": std_obj.sector,
+                "scope": std_obj.scope,
+                "technical_requirements": std_obj.technical_requirements,
+            }
+            pending_vectors.append({
+                "std_obj": std_obj,
+                "hash": new_hash,
+                "is_new": is_new,
+                "doc_id": std_number.replace(" ", "_").replace("/", "_").replace(":", "_"),
+                "document": _embedding_text(std_number, merged),
+                "metadata": {
+                    "standard_number": std_number,
+                    "canonical_standard_number": canonical_num,
+                    "title": std_obj.title or "",
+                    "category": std_obj.category or "",
+                    "sector": std_obj.sector or "",
+                    "revision": std_obj.revision or "",
+                    "status": std_obj.status or "Active",
+                    "content_hash": new_hash,
+                },
+            })
 
-                    if is_new:
-                        embeddings_created += 1
-                    else:
-                        embeddings_updated += 1
-                except Exception as e:
-                    logger.warning(f"ChromaDB upsert failed for {std_number}: {str(e)}")
-                    std_obj.embedding_status = "failed"
-                    std_obj.needs_reindex = True
-                    std_obj.embedding_error = str(e)
-                    db.commit()
-            else:
-                std_obj.embedding_status = "failed"
-                std_obj.needs_reindex = True
-                std_obj.embedding_error = "ChromaDB vector collection is unavailable"
-                db.commit()
+        processed_since_commit += 1
+        if processed_since_commit >= INGEST_BATCH_SIZE:
+            db.commit()
+            _flush_vector_batch(db, collection, pending_vectors, counters)
+            pending_vectors = []
+            processed_since_commit = 0
+
+    db.commit()
+    _flush_vector_batch(db, collection, pending_vectors, counters)
+    pending_vectors = []
+    embeddings_created = counters["embeddings_created"]
+    embeddings_updated = counters["embeddings_updated"]
 
     # Sync Relationships
     for item in records:
@@ -294,6 +365,7 @@ def ingest_standards(db: Session, connector: BISConnectorInterface) -> Dict[str,
         "updated_records": updated_count,
         "unchanged_records": unchanged_count,
         "failed_records": failed_count,
+        "duplicate_records": duplicate_count,
         "embeddings_created": embeddings_created,
         "embeddings_updated": embeddings_updated,
         "error_summary": error_logs,

@@ -1,8 +1,10 @@
 import os
+from datetime import datetime, timezone
+import sqlite3
 from typing import Generator
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 load_dotenv()
@@ -12,10 +14,21 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL is not set")
 
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
+    connect_args=connect_args,
 )
+
+
+@event.listens_for(engine, "connect")
+def on_connect(dbapi_connection, connection_record):
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        dbapi_connection.create_function(
+            "now", 0, lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        )
 
 SessionLocal = sessionmaker(
     autocommit=False,
@@ -49,6 +62,8 @@ def init_db() -> None:
     with engine.connect() as conn:
         from sqlalchemy import text
         migrations = [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;",
+            "ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1;",
             "ALTER TABLE indian_standards ADD COLUMN IF NOT EXISTS technical_requirements TEXT;",
             "ALTER TABLE indian_standards ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);",
             "ALTER TABLE indian_standards ADD COLUMN IF NOT EXISTS source VARCHAR(150);",

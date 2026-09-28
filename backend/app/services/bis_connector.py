@@ -34,21 +34,37 @@ def parse_standard_number(raw_num: str) -> Dict[str, Optional[str]]:
             "revision_year": None
         }
 
-    base_match = re.search(r"\bIS\s*(\d+)", raw_num, re.IGNORECASE)
-    base_num_str = f"IS {base_match.group(1)}" if base_match else raw_num.split()[0]
+    base_match = re.match(r"\s*([A-Za-z]+(?:\s*/\s*[A-Za-z]+)*)\s*(\d+)", raw_num)
+    if base_match:
+        prefix = re.sub(r"\s*/\s*", "/", base_match.group(1)).upper()
+        base_num_str = f"{prefix} {base_match.group(2)}"
+    else:
+        base_num_str = raw_num.split()[0]
 
-    part_match = re.search(r"\(?\bPart\s*(\d+)\)?", raw_num, re.IGNORECASE)
-    part_str = f"Part {part_match.group(1)}" if part_match else None
+    part_match = re.search(r"\bPart\s*(\d+)(?:\s*/\s*Sec(?:tion)?\s*(\d+))?", raw_num, re.IGNORECASE)
+    if part_match:
+        part_str = f"Part {part_match.group(1)}"
+        if part_match.group(2):
+            part_str += f"/Sec {part_match.group(2)}"
+    else:
+        part_str = None
 
-    year_match = re.search(r":?\b(19\d{2}|20\d{2})\b", raw_num)
+    # Year is only ever the suffix after ':' — never the base number itself (IS 2000:1990).
+    year_match = re.search(r":\s*(\d{4})\b", raw_num)
     year_str = year_match.group(1) if year_match else None
 
-    parts = [base_num_str]
-    if part_str:
-        parts.append(f"({part_str})")
-    canonical = " ".join(parts)
-    if year_str:
-        canonical += f":{year_str}"
+    # Canonical form normalizes formatting only; it must keep every component
+    # (Part/Sec, IS/IEC and IS/ISO numbers, '-n' suffixes) so distinct standards never collide.
+    canonical = re.sub(r"\s+", " ", raw_num)
+    canonical = re.sub(r"\s*:\s*", ":", canonical)
+    canonical = re.sub(r"\s*/\s*", "/", canonical)
+    canonical = re.sub(r"\(\s*", "(", canonical)
+    canonical = re.sub(r"\s*\)", ")", canonical)
+    canonical = re.sub(r"\b(part|sec|section)\s*(\d)", lambda m: f"{m.group(1).capitalize()} {m.group(2)}", canonical, flags=re.IGNORECASE)
+    canonical = re.sub(r"(\d)\(", r"\1 (", canonical)
+    canon_base = re.match(r"([A-Za-z]+(?:/[A-Za-z]+)*)\s*(\d+)", canonical)
+    if canon_base:
+        canonical = f"{canon_base.group(1).upper()} {canon_base.group(2)}" + canonical[canon_base.end():]
 
     return {
         "raw_standard_number": raw_num,

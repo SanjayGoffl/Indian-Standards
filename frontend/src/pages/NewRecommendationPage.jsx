@@ -1,215 +1,233 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as api from '../services/api';
+import { ErrorState } from '../components/UiStates';
+import './StandardsUI.css';
+
+const ACCEPTED = '.pdf,.docx,.doc,.txt,.png,.jpg,.jpeg';
+
+// Describes what POST /api/procurement/analyze actually does; not a live progress feed.
+const PIPELINE = [
+  'Extract technical parameters from the text (OCR for scanned documents)',
+  'Hybrid search: exact IS number, semantic vectors and keywords',
+  'Evaluate applicability against each candidate standard',
+  'Resolve certification schemes and revision status',
+];
+
+const fmtSize = (bytes) => (bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`);
 
 export default function NewRecommendationPage({ onAnalysisComplete }) {
   const [productCategory, setProductCategory] = useState('');
   const [procurementPurpose, setProcurementPurpose] = useState('');
   const [technicalSpecs, setTechnicalSpecs] = useState('');
-  const [targetLanguage, setTargetLanguage] = useState('en');
   const [selectedFile, setSelectedFile] = useState(null);
+  const [dragging, setDragging] = useState(false);
+
   const [loading, setLoading] = useState(false);
-  const [progressMessage, setProgressMessage] = useState('');
-  const [errorMessage, setErrorMessage] = useState('');
+  const [elapsed, setElapsed] = useState(0);
+  const [error, setError] = useState(null);
+  const [validation, setValidation] = useState('');
 
-  const sampleCategories = [
-    "Electrical Wires & Power Cables",
-    "Solar PV Modules & Inverters",
-    "Reinforcement Steel & Concrete",
-    "Water Supply Pipes & Valves",
-    "IT Equipment & Hardware",
-    "Industrial Safety Helmets & PPE",
-    "Drinking Water Purification Systems"
-  ];
+  // Category suggestions come from the categories actually stored in the catalogue.
+  const [categories, setCategories] = useState([]);
+  const fileInput = useRef(null);
 
-  const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
+  useEffect(() => {
+    api.getIndianStandards()
+      .then((data) => {
+        const cats = [...new Set((data?.standards || []).map((s) => s.category).filter(Boolean))].sort();
+        setCategories(cats);
+      })
+      .catch(() => setCategories([]));
+  }, []);
+
+  useEffect(() => {
+    if (!loading) return undefined;
+    setElapsed(0);
+    const t = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [loading]);
+
+  const pickFile = (file) => {
+    if (file) {
+      setSelectedFile(file);
+      setValidation('');
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setErrorMessage('');
+    setError(null);
 
     if (!technicalSpecs.trim() && !selectedFile) {
-      setErrorMessage("Please enter technical specifications text or upload an RFP/tender document.");
+      setValidation('Enter the technical specification text or attach a tender document.');
       return;
     }
+    setValidation('');
 
+    const formData = new FormData();
+    if (productCategory.trim()) formData.append('product_category', productCategory.trim());
+    if (procurementPurpose.trim()) formData.append('procurement_purpose', procurementPurpose.trim());
+    if (technicalSpecs.trim()) formData.append('technical_specifications', technicalSpecs.trim());
+    if (selectedFile) formData.append('file', selectedFile);
+
+    setLoading(true);
     try {
-      setLoading(true);
-      setProgressMessage("Extracting technical parameters & running OCR if needed...");
-
-      const formData = new FormData();
-      if (productCategory) formData.append('product_category', productCategory);
-      if (procurementPurpose) formData.append('procurement_purpose', procurementPurpose);
-      if (technicalSpecs) formData.append('technical_specifications', technicalSpecs);
-      if (selectedFile) formData.append('file', selectedFile);
-
-      setTimeout(() => {
-        setProgressMessage("Performing hybrid semantic search against Indian Standards database...");
-      }, 2000);
-
-      setTimeout(() => {
-        setProgressMessage("Evaluating applicability, checking revisions, & resolving BIS/CRS certifications...");
-      }, 4000);
-
       const result = await api.analyzeProcurementSpecification(formData);
       onAnalysisComplete(result.request_id || result);
-
     } catch (err) {
-      console.error("Procurement analysis error:", err);
-      if (api.isUnauthorizedError(err) || err.status === 401) {
-        setErrorMessage("Your session has expired or authentication is invalid. Please log out and log in again to analyze specifications.");
-      } else {
-        setErrorMessage(err.message || "Failed to analyze procurement specification. Please try again.");
-      }
+      console.error('Procurement analysis error:', err);
+      setError(err);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ padding: '24px', maxWidth: '960px', margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ marginBottom: '24px' }}>
-        <h1 style={{ fontSize: '1.6rem', fontWeight: '700', color: '#1e293b', margin: 0 }}>
-          New Procurement Specification Analysis
-        </h1>
-        <p style={{ color: '#64748b', fontSize: '0.95rem', marginTop: '6px' }}>
-          Enter product requirements or upload tender specifications (PDF, DOCX, TXT, scanned images) to identify mandatory & applicable Indian Standards (IS).
-        </p>
-      </div>
+    <div className="su-page">
+      <header className="su-header">
+        <div>
+          <h1 className="su-title">Analyze tender</h1>
+          <p className="su-subtitle">
+            Paste the specification or attach the tender document to get applicable Indian Standards, certification
+            requirements and gaps to fix before publishing.
+          </p>
+        </div>
+      </header>
 
-      {errorMessage && (
-        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', color: '#991b1b', padding: '14px', borderRadius: '8px', marginBottom: '20px', fontSize: '0.9rem' }}>
-          ⚠️ {errorMessage}
+      {error && (
+        <div style={{ marginBottom: 16 }}>
+          <ErrorState title="The analysis did not complete" error={error} />
         </div>
       )}
 
-      <form onSubmit={handleSubmit} style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '28px', boxShadow: '0 2px 10px rgba(0,0,0,0.03)' }}>
-        {/* Product Category */}
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ display: 'block', fontWeight: '600', color: '#1e293b', marginBottom: '8px', fontSize: '0.9rem' }}>
-            Product Category / Sector (Optional Hint)
-          </label>
-          <input
-            type="text"
-            value={productCategory}
-            onChange={(e) => setProductCategory(e.target.value)}
-            placeholder="e.g. Electrical Cables, Solar PV Modules, Steel Bars, HDPE Pipes..."
-            style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.95rem', boxSizing: 'border-box' }}
-          />
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
-            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Quick Select:</span>
-            {sampleCategories.map((cat, idx) => (
-              <span
-                key={idx}
-                onClick={() => setProductCategory(cat)}
-                style={{ fontSize: '0.75rem', background: '#f1f5f9', color: '#334155', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}
-              >
-                + {cat}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {/* Procurement Purpose */}
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ display: 'block', fontWeight: '600', color: '#1e293b', marginBottom: '8px', fontSize: '0.9rem' }}>
-            Procurement Purpose / End-Use Context
-          </label>
-          <input
-            type="text"
-            value={procurementPurpose}
-            onChange={(e) => setProcurementPurpose(e.target.value)}
-            placeholder="e.g. Public distribution tender, CPWD building infrastructure, Smart City water project..."
-            style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.95rem', boxSizing: 'border-box' }}
-          />
-        </div>
-
-        {/* Technical Specifications Input */}
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ display: 'block', fontWeight: '600', color: '#1e293b', marginBottom: '8px', fontSize: '0.9rem' }}>
-            Technical Specification Text / Requirement Details
-          </label>
-          <textarea
-            rows={6}
-            value={technicalSpecs}
-            onChange={(e) => setTechnicalSpecs(e.target.value)}
-            placeholder="Paste technical requirements, material specifications, conductor details, voltage ratings, testing parameters, or performance criteria here..."
-            style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.95rem', boxSizing: 'border-box', fontFamily: 'inherit' }}
-          />
-        </div>
-
-        {/* Document Upload Option */}
-        <div style={{ marginBottom: '24px', background: '#f8fafc', border: '2px dashed #cbd5e1', borderRadius: '10px', padding: '20px', textAlign: 'center' }}>
-          <label style={{ cursor: 'pointer', display: 'block' }}>
-            <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📄</div>
-            <div style={{ fontWeight: '600', color: '#1e293b', fontSize: '0.95rem' }}>
-              {selectedFile ? selectedFile.name : 'Upload RFP / Tender Document'}
-            </div>
-            <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px' }}>
-              Supports PDF, DOCX, TXT, or scanned document images (PaddleOCR enabled)
-            </div>
-            <input
-              type="file"
-              accept=".pdf,.docx,.doc,.txt,.png,.jpg,.jpeg"
-              onChange={handleFileChange}
-              style={{ display: 'none' }}
+      <div className="su-analyze-layout">
+        <form className="su-card su-form" onSubmit={handleSubmit} noValidate>
+          <div className="su-field su-field--full">
+            <label className="su-label" htmlFor="spec-text">
+              Technical specification <small>required unless a document is attached</small>
+            </label>
+            <textarea
+              id="spec-text"
+              className="su-input su-textarea"
+              rows={8}
+              value={technicalSpecs}
+              onChange={(e) => { setTechnicalSpecs(e.target.value); setValidation(''); }}
+              placeholder="e.g. 1.1 kV, 4-core, 25 sq.mm aluminium conductor, XLPE insulated, PVC sheathed armoured power cable, FRLS outer sheath…"
+              disabled={loading}
             />
-          </label>
-          {selectedFile && (
-            <button
-              type="button"
-              onClick={() => setSelectedFile(null)}
-              style={{ marginTop: '10px', background: '#ef4444', color: '#ffffff', border: 'none', padding: '4px 10px', borderRadius: '4px', fontSize: '0.75rem', cursor: 'pointer' }}
+          </div>
+
+          <div className="su-field su-field--full">
+            <span className="su-label">Tender document <small>PDF, DOCX, TXT or scanned image</small></span>
+            <div
+              className={`su-dropzone${dragging ? ' is-drag' : ''}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => !loading && fileInput.current?.click()}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') fileInput.current?.click(); }}
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => { e.preventDefault(); setDragging(false); pickFile(e.dataTransfer.files?.[0]); }}
             >
-              Remove File
-            </button>
-          )}
-        </div>
+              <span className="su-dropzone-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 17 17" fill="none">
+                  <path d="M8.5 11V2.5M5 6l3.5-3.5L12 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M2.5 11v2.5a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                {selectedFile ? (
+                  <>
+                    <div style={{ fontWeight: 600, fontSize: '0.88rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedFile.name}</div>
+                    <div className="su-muted" style={{ fontSize: '0.78rem' }}>{fmtSize(selectedFile.size)}</div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>Drop a file here or click to browse</div>
+                    <div className="su-muted" style={{ fontSize: '0.78rem' }}>Scanned pages are read with OCR</div>
+                  </>
+                )}
+              </div>
+              {selectedFile && !loading && (
+                <button
+                  type="button"
+                  className="su-btn su-btn--ghost"
+                  style={{ color: 'var(--accent-rose)' }}
+                  onClick={(e) => { e.stopPropagation(); setSelectedFile(null); if (fileInput.current) fileInput.current.value = ''; }}
+                >
+                  Remove
+                </button>
+              )}
+              <input
+                ref={fileInput}
+                type="file"
+                accept={ACCEPTED}
+                onChange={(e) => pickFile(e.target.files?.[0])}
+                style={{ display: 'none' }}
+              />
+            </div>
+          </div>
 
-        {/* Target Language */}
-        <div style={{ marginBottom: '28px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <label style={{ fontWeight: '600', color: '#1e293b', fontSize: '0.9rem' }}>Language Context:</label>
-          <select
-            value={targetLanguage}
-            onChange={(e) => setTargetLanguage(e.target.value)}
-            style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-          >
-            <option value="en">English (Standard Tender Specs)</option>
-            <option value="hi">Hindi (हिन्दी Procurement Context)</option>
-          </select>
-        </div>
+          <div className="su-field">
+            <label className="su-label" htmlFor="category">Product category <small>optional</small></label>
+            <input
+              id="category"
+              className="su-input"
+              list="category-options"
+              value={productCategory}
+              onChange={(e) => setProductCategory(e.target.value)}
+              placeholder="e.g. Electrical cables"
+              disabled={loading}
+            />
+            <datalist id="category-options">
+              {categories.map((c) => <option key={c} value={c} />)}
+            </datalist>
+            {categories.length > 0 && !productCategory && (
+              <div className="su-suggest">
+                {categories.slice(0, 4).map((c) => (
+                  <button key={c} type="button" onClick={() => setProductCategory(c)}>{c}</button>
+                ))}
+              </div>
+            )}
+          </div>
 
-        {/* Submit CTA */}
-        <button
-          type="submit"
-          disabled={loading}
-          style={{
-            width: '100%',
-            background: loading ? '#94a3b8' : 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)',
-            color: '#ffffff',
-            border: 'none',
-            padding: '16px',
-            borderRadius: '8px',
-            fontSize: '1.05rem',
-            fontWeight: '700',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            boxShadow: '0 4px 14px rgba(30,60,114,0.3)',
-            transition: 'all 0.2s'
-          }}
-        >
-          {loading ? (
-            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-              <span className="spinner">⏳</span> {progressMessage || 'Analyzing Specification...'}
+          <div className="su-field">
+            <label className="su-label" htmlFor="purpose">Procurement purpose <small>optional</small></label>
+            <input
+              id="purpose"
+              className="su-input"
+              value={procurementPurpose}
+              onChange={(e) => setProcurementPurpose(e.target.value)}
+              placeholder="e.g. Substation cabling for a municipal project"
+              disabled={loading}
+            />
+          </div>
+
+          <div className="su-form-actions">
+            <span className="su-muted" style={{ fontSize: '0.8rem' }} role="status" aria-live="polite">
+              {validation
+                ? <span style={{ color: 'var(--accent-rose)' }}>{validation}</span>
+                : loading ? `Analyzing… ${elapsed}s elapsed. Large or scanned documents can take a minute or more.` : ''}
             </span>
-          ) : (
-            '🔍 Analyze & Recommend Indian Standards'
-          )}
-        </button>
-      </form>
+            <button type="submit" className="su-btn su-btn--primary" disabled={loading} style={{ minWidth: 200 }}>
+              {loading && <span className="su-spinner" />}
+              {loading ? 'Analyzing…' : 'Analyze & recommend standards'}
+            </button>
+          </div>
+        </form>
+
+        <aside className="su-card">
+          <div className="su-rec-label">What the analysis does</div>
+          <ol className="su-steps">
+            {PIPELINE.map((step, i) => (
+              <li key={step}><span>{i + 1}</span><span>{step}</span></li>
+            ))}
+          </ol>
+          <p className="su-muted" style={{ fontSize: '0.78rem', marginTop: 12, lineHeight: 1.5 }}>
+            Results are advisory. Always confirm revisions and certification orders on the official BIS portal.
+          </p>
+        </aside>
+      </div>
     </div>
   );
 }

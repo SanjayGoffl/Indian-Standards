@@ -20,6 +20,24 @@ from app.services.recommendation_validator import OFFICIAL_SCORE_DISCLAIMER, nor
 
 logger = logging.getLogger(__name__)
 
+LIVE_CATALOGUE_SOURCE = "BIS Know Your Standards (Live API)"
+
+
+def _newer_active_revision(db: Session, std_obj: IndianStandard) -> Optional[str]:
+    """Newest active standard with the same base number and part, if later than std_obj."""
+    if not std_obj or not std_obj.base_standard_number:
+        return None
+    q = db.query(IndianStandard).filter(
+        IndianStandard.base_standard_number == std_obj.base_standard_number,
+        IndianStandard.status != "Withdrawn",
+        IndianStandard.id != std_obj.id,
+    )
+    q = q.filter(IndianStandard.part_number == std_obj.part_number) if std_obj.part_number else q.filter(IndianStandard.part_number.is_(None))
+    latest = q.order_by(IndianStandard.revision_year.desc()).first()
+    if latest and (latest.revision_year or "") > (std_obj.revision_year or ""):
+        return latest.standard_number
+    return None
+
 
 def process_procurement_recommendation(
     db: Session,
@@ -95,6 +113,7 @@ def process_procurement_recommendation(
     seen_cert_keys = set()
 
     warnings_list = extracted_data.get("missing_or_ambiguous_specs", [])
+    version_warning_list = []
     sources_set = set()
 
     for item in evaluated_recommendations:
@@ -123,14 +142,19 @@ def process_procurement_recommendation(
 
         # Version verification
         std_obj = db.query(IndianStandard).filter(IndianStandard.standard_number == std_num).first()
-        has_catalog_sync = False  # Set to False until official live API sync is available
+        has_catalog_sync = bool(std_obj and std_obj.source == LIVE_CATALOGUE_SOURCE)
+        newer_revision = _newer_active_revision(db, std_obj) if has_catalog_sync else None
 
         ver_info = verify_standard_version_details(
             standard_number=std_num,
             raw_revision=item.get("latest_revision"),
             amendment_details=",".join(item.get("amendments", [])),
-            has_catalog_sync=has_catalog_sync
+            has_catalog_sync=has_catalog_sync,
+            catalogue_status=std_obj.status if std_obj else None,
+            newer_active_revision=newer_revision,
+            catalogue_retrieved_at=std_obj.retrieved_at if std_obj else None,
         )
+        version_warning_list.extend(w for w in ver_info.get("version_warnings", []) if "withdrawn" in w or "newer revision" in w)
         item["latest_revision"] = ver_info["latest_revision"]
         item["revision_verification_status"] = ver_info["revision_verification_status"]
         if ver_info["verification_required"]:
@@ -240,7 +264,7 @@ def process_procurement_recommendation(
         "related_standards": related_standards_list,
         "excluded_standards": deduped_excluded,
         "certification_guidance": certification_guidance_list,
-        "warnings": [
+        "warnings": version_warning_list + [
             "Always verify standard versions and active amendments with official BIS gazette publications prior to tender publication."
         ],
         "sources": list(sources_set),

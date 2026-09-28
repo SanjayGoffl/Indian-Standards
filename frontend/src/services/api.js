@@ -839,21 +839,90 @@ export async function deleteProcurementRequest(requestId) {
   return parseResponse(response);
 }
 
-export async function getIndianStandards(search = '', category = '') {
+/*
+ * The unfiltered catalogue can be several MB once the live BIS sync has run,
+ * and several pages need it (counts, category lists). Share one in-flight
+ * request and reuse the result briefly; admin sync actions clear it.
+ */
+const CATALOG_TTL_MS = 60 * 1000;
+let catalogCache = null; // { at, promise }
+
+export function invalidateStandardsCache() {
+  catalogCache = null;
+}
+
+export async function getIndianStandards(search = '', category = '', sector = '') {
+  const unfiltered = !search && !category && !sector;
+
+  if (unfiltered && catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) {
+    return catalogCache.promise;
+  }
+
   const params = new URLSearchParams();
   if (search) params.append('search', search);
   if (category) params.append('category', category);
+  if (sector) params.append('sector', sector);
 
-  const response = await fetch(`${API_BASE_URL}/api/standards?${params.toString()}`, {
+  const promise = fetch(`${API_BASE_URL}/api/standards?${params.toString()}`, {
     headers: getAuthHeaders(),
-  });
-  return parseResponse(response);
+  }).then(parseResponse);
+
+  if (unfiltered) {
+    catalogCache = { at: Date.now(), promise };
+    promise.catch(() => { catalogCache = null; });
+  }
+  return promise;
 }
 
 export async function getIndianStandardDetail(standardNumber) {
   const response = await fetch(`${API_BASE_URL}/api/standards/${encodeURIComponent(standardNumber)}`, {
     headers: getAuthHeaders(),
   });
+  return parseResponse(response);
+}
+
+/* ------------------------------------------------------------------ */
+/* Standards ingestion admin APIs (Admin role required)               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * source: 'mock' (built-in sample set, synchronous) or
+ *         'bis_live' (BIS public catalogue sweep, runs in background).
+ */
+export async function syncStandards(source = 'mock', maxNumber = null) {
+  const params = new URLSearchParams({ source });
+  if (source === 'bis_live' && maxNumber) params.append('max_number', String(maxNumber));
+
+  const response = await fetch(`${API_BASE_URL}/api/standards/sync?${params.toString()}`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  invalidateStandardsCache();
+  return parseResponse(response);
+}
+
+export async function getStandardsIngestLogs() {
+  const response = await fetch(`${API_BASE_URL}/api/standards/ingest-logs`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse(response);
+}
+
+export async function reindexFailedStandards() {
+  const response = await fetch(`${API_BASE_URL}/api/standards/reindex-failed`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  invalidateStandardsCache();
+  return parseResponse(response);
+}
+
+export async function seedStandards() {
+  const response = await fetch(`${API_BASE_URL}/api/standards/seed`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  invalidateStandardsCache();
   return parseResponse(response);
 }
 

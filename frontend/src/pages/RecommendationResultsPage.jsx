@@ -1,556 +1,534 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import * as api from '../services/api';
+import { Badge, EmptyState, ErrorState, LoadingState, StatTile } from '../components/UiStates';
+import './StandardsUI.css';
+
+/*
+ * Report layout follows the review flow:
+ * requirements → recommended IS → reason → related / normative standards
+ * → version / status → certification → tender gaps.
+ * Everything rendered comes from GET /api/procurement/requests/{id}.
+ */
+
+const BIS_PORTAL_URL = 'https://www.bis.gov.in/';
+
+// Generic prompts shown only when nothing matched and the backend returned no
+// specific missing-requirement list. Labelled in the UI as a general checklist.
+const GENERIC_SPEC_CHECKLIST = [
+  'Material grade or composition',
+  'Dimensions, tolerances and thickness',
+  'Operating temperature and environmental exposure',
+  'Mechanical, electrical or physical test requirements',
+  'Required certification or purchaser specification',
+];
+
+const FLOW = [
+  ['requirements', 'Requirements'],
+  ['recommended', 'Recommended IS'],
+  ['related', 'Related standards'],
+  ['certification', 'Certification'],
+  ['gaps', 'Tender gaps'],
+];
+
+const fmtDate = (iso) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-IN', { dateStyle: 'medium' });
+};
+
+const humanize = (s) => String(s || '').replace(/_/g, ' ');
 
 export default function RecommendationResultsPage({ requestId, onBack }) {
   const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(Boolean(requestId));
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    async function loadReport() {
-      if (!requestId) return;
-      try {
-        setLoading(true);
-        const data = await api.getProcurementRequestDetail(requestId);
-        setReport(data);
-      } catch (err) {
-        console.error("Load report error:", err);
-        setError("Failed to load recommendation report details.");
-      } finally {
-        setLoading(false);
-      }
+  const loadReport = useCallback(async () => {
+    if (!requestId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.getProcurementRequestDetail(requestId);
+      setReport(data);
+    } catch (err) {
+      console.error('Load report error:', err);
+      setError(err);
+    } finally {
+      setLoading(false);
     }
-    loadReport();
   }, [requestId]);
 
-  const handlePrint = () => {
-    window.print();
-  };
+  useEffect(() => {
+    loadReport();
+  }, [loadReport]);
+
+  const backButton = (
+    <button type="button" className="su-btn su-btn--secondary back-button" onClick={onBack}>
+      ← Back to history
+    </button>
+  );
+
+  if (!requestId) {
+    return (
+      <div className="su-page">
+        <EmptyState
+          title="No report selected"
+          text="Open a report from your analysis history, or run a new specification analysis."
+          action={backButton}
+        />
+      </div>
+    );
+  }
 
   if (loading) {
     return (
-      <div style={{ padding: '60px', textAlign: 'center', color: '#64748b' }}>
-        <div style={{ fontSize: '2rem', marginBottom: '12px' }}>📊</div>
-        <div>Generating evidence-based recommendation report...</div>
+      <div className="su-page">
+        <LoadingState label="Loading recommendation report…" rows={6} />
       </div>
     );
   }
 
   if (error || !report) {
     return (
-      <div style={{ padding: '40px', maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
-        <div style={{ color: '#ef4444', fontSize: '1.2rem', fontWeight: '700', marginBottom: '16px' }}>{error || 'Report unavailable'}</div>
-        <button onClick={onBack} style={{ background: '#2563eb', color: '#ffffff', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>
-          ← Back to Dashboard
-        </button>
+      <div className="su-page">
+        <ErrorState
+          title={error?.status === 404 ? 'Report not found' : 'Could not load this report'}
+          error={error || 'The report is unavailable.'}
+          onRetry={error?.status === 404 ? undefined : loadReport}
+          action={backButton}
+        />
       </div>
     );
   }
 
-  const getStatusBadgeStyle = (status) => {
-    switch (status) {
-      case 'Recommended':
-      case 'Analysis Validated':
-        return { background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' };
-      case 'Potentially Applicable':
-      case 'Analysis Completed – Verification Required':
-      case 'Analysis Completed - Verification Required':
-        return { background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' };
-      case 'No Applicable Standard Confirmed':
-      case 'No Directly Applicable Standard Confirmed - Manual Verification Required':
-        return { background: '#fff7ed', color: '#c2410c', border: '1px solid #fed7aa' };
-      default:
-        return { background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' };
-    }
-  };
+  const recommended = report.recommended_standards || [];
+  const potential = report.potentially_applicable_standards || [];
+  const allStandards = [...recommended, ...potential];
+  const requirements = report.extracted_requirements || [];
+  const needsVerification = report.standards_requiring_verification || [];
+  const excluded = report.excluded_standards || [];
+  const relatedTop = report.related_standards || [];
+  const certGuidance = report.certification_guidance || [];
+  const missing = report.missing_requirements || [];
+  const warnings = report.warnings || [];
+  const sources = report.sources || [];
+  const tenderGapCount = missing.length + warnings.length + needsVerification.length;
 
-  const getNoMatchBulletPoints = (productCategory) => {
-    const cat = (productCategory || '').toLowerCase();
-    if (cat.includes('glove') || cat.includes('hand protection')) {
-      return [
-        "Glove material (e.g. nitrile, neoprene, latex, PVC)",
-        "Specific chemicals and concentration levels",
-        "Required protection duration and breakthrough time",
-        "Glove thickness and cuff length",
-        "Applicable test methods (e.g. EN 388, EN ISO 374)",
-        "Required certification and safety standards",
-        "Intended working conditions and laboratory environment"
-      ];
-    } else if (cat.includes('cable') || cat.includes('wire') || cat.includes('electrical')) {
-      return [
-        "Conductor material (Copper / Aluminium)",
-        "Insulation material (PVC / XLPE)",
-        "Working voltage rating (e.g. 1100 V)",
-        "FRLS / LSZH specification",
-        "Sheath material and thickness",
-        "Applicable test methods and standards"
-      ];
-    } else if (cat.includes('insulation') || cat.includes('thermal') || cat.includes('turbine')) {
-      return [
-        "Material composition (ceramic fiber, mineral wool, silica)",
-        "Maximum operating temperature (°C)",
-        "Thermal conductivity (W/m·K) requirement",
-        "Thickness and density specifications",
-        "Applicable test methods and standards"
-      ];
-    } else if (cat.includes('pipe') || cat.includes('hdpe')) {
-      return [
-        "HDPE pipe material grade (PE 63, PE 80, PE 100)",
-        "Nominal outer diameter and pressure rating (PN rating)",
-        "Fluid transported and temperature limits",
-        "Applicable test methods and standards"
-      ];
-    } else if (cat.includes('helmet')) {
-      return [
-        "Helmet shell material (HDPE, ABS, Fiberglass)",
-        "Impact resistance and penetration resistance specifications",
-        "Electrical insulation rating",
-        "Applicable test methods and standards"
-      ];
-    } else {
-      return [
-        "Specific material grade or composition",
-        "Dimensional tolerances and thickness specifications",
-        "Operating temperature and environmental exposure limits",
-        "Applicable mechanical or physical test requirements",
-        "Required certification or purchaser specification"
-      ];
-    }
-  };
+  // overall_status is not part of the response schema; derive a label from counts instead.
+  const overall = report.overall_status || (
+    recommended.length
+      ? 'Applicable standard identified'
+      : potential.length
+        ? 'Potential standards identified — verification required'
+        : 'No directly applicable standard confirmed'
+  );
 
   return (
-    <div className="recommendation-report" style={{ padding: '24px', maxWidth: '1100px', margin: '0 auto' }}>
-      {/* Printable Header Branding */}
-      <div className="print-only-branding" style={{ display: 'none', marginBottom: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #0f172a', paddingBottom: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ width: '36px', height: '36px', background: '#0f172a', color: '#ffffff', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.2rem' }}>
-              🇮🇳
-            </div>
-            <div>
-              <div style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                IS Procurement AI Engine
-              </div>
-              <div style={{ fontSize: '0.75rem', color: '#475569', fontWeight: '600' }}>
-                BIS Standards Applicability & Technical Evaluation Report
-              </div>
-            </div>
-          </div>
-          <div style={{ textAlign: 'right', fontSize: '0.8rem', color: '#475569' }}>
-            <div><strong>Official Technical Report</strong></div>
-            <div>Ref: {report.request_id || 'REF-BIS-SPEC-001'}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Action Header */}
-      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-        <button
-          onClick={onBack}
-          className="back-button"
-          style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
-        >
-          ← Back to History
-        </button>
-        <button
-          onClick={handlePrint}
-          className="print-button"
-          style={{ background: '#1e293b', color: '#ffffff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}
-        >
-          🖨️ Export PDF / Print Report
-        </button>
-      </div>
-
-      {/* Official Banner Header */}
-      <div className="report-header-banner" style={{ background: '#1e293b', color: '#ffffff', padding: '24px', borderRadius: '12px 12px 0 0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+    <div className="su-page recommendation-report">
+      {/* Print-only branding */}
+      <div className="print-only-branding" style={{ display: 'none', marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #0f172a', paddingBottom: 12 }}>
           <div>
-            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', background: 'rgba(255,255,255,0.15)', padding: '4px 8px', borderRadius: '4px' }}>
-              Evidence-Based Technical Evaluation
-            </span>
-            <h1 className="report-section-title" style={{ fontSize: '1.6rem', fontWeight: '800', marginTop: '8px', margin: '8px 0 4px 0' }}>
-              Indian Standards Recommendation & Validation Report
-            </h1>
-            <p style={{ margin: 0, opacity: 0.85, fontSize: '0.9rem' }}>
-              Procurement Domain: <strong style={{ color: '#38bdf8' }}>{report.product_category || 'General Procurement'}</strong>
-              {report.product_type && report.product_type !== report.product_category && (
-                <> | Product Type: <strong style={{ color: '#38bdf8' }}>{report.product_type}</strong></>
-              )}
-              | Generated: {report.created_at ? new Date(report.created_at).toLocaleDateString() : 'Today'}
-            </p>
+            <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>Indian Standards Procurement Engine</div>
+            <div style={{ fontSize: '0.75rem' }}>BIS standards applicability report</div>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <span style={{
-              padding: '6px 14px',
-              borderRadius: '20px',
-              fontSize: '0.85rem',
-              fontWeight: '700',
-              ...getStatusBadgeStyle(report.overall_status)
-            }}>
-              {report.overall_status || 'Analysis Completed – Verification Required'}
-            </span>
+          <div style={{ textAlign: 'right', fontSize: '0.8rem' }}>
+            <div>Ref: {report.request_id || requestId}</div>
+            {fmtDate(report.created_at) && <div>{fmtDate(report.created_at)}</div>}
           </div>
         </div>
       </div>
 
-      {/* Report Body */}
-      <div className="report-body-container" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderTop: 'none', borderRadius: '0 0 12px 12px', padding: '28px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}>
-        
-        {/* Zero Match / Manual Verification Notice Banner */}
-        {report.notice && (
-          <div className="report-banner report-card" style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '8px', padding: '16px 20px', marginBottom: '24px', color: '#c2410c', fontSize: '0.95rem', fontWeight: '700', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-            <span style={{ fontSize: '1.3rem' }}>⚠️</span>
-            <div>
-              <div className="report-section-title" style={{ fontSize: '1rem', fontWeight: '800', marginBottom: '4px' }}>
-                No Directly Applicable Standard Confirmed
+      <header className="su-header">
+        <div>
+          <div className="su-eyebrow no-print">
+            <button type="button" className="su-btn su-btn--ghost back-button" style={{ padding: 0 }} onClick={onBack}>
+              ← Analysis history
+            </button>
+          </div>
+          <h1 className="su-title">Standards recommendation report</h1>
+          <p className="su-subtitle">
+            {report.product_category || 'General procurement'}
+            {fmtDate(report.created_at) && <> · {fmtDate(report.created_at)}</>}
+            {' · '}<span className="su-mono">{report.request_id || requestId}</span>
+          </p>
+          <div style={{ marginTop: 10 }}><Badge>{overall}</Badge></div>
+          <nav className="su-flow no-print" aria-label="Report sections">
+            {FLOW.map(([id, label], i) => (
+              <React.Fragment key={id}>
+                {i > 0 && <span aria-hidden="true">→</span>}
+                <a href={`#rr-${id}`}>{label}</a>
+              </React.Fragment>
+            ))}
+          </nav>
+        </div>
+        <div className="su-header-actions no-print">
+          <button type="button" className="su-btn su-btn--secondary print-button" onClick={() => window.print()}>
+            Print / export PDF
+          </button>
+        </div>
+      </header>
+
+      <div className="su-summary-strip">
+        <StatTile label="Requirements" value={requirements.length} tone="info" />
+        <StatTile label="Recommended" value={recommended.length} tone={recommended.length ? 'ok' : 'neutral'} />
+        <StatTile label="Potentially applicable" value={potential.length} tone={potential.length ? 'warn' : 'neutral'} />
+        <StatTile label="Certification items" value={certGuidance.length} />
+        <StatTile label="Tender gaps" value={tenderGapCount} tone={tenderGapCount ? 'danger' : 'ok'} />
+      </div>
+
+      {report.notice && (
+        <div className="su-notice su-notice--warn report-banner report-card" style={{ marginBottom: 24 }}>
+          <strong>Notice</strong>
+          {report.notice}
+        </div>
+      )}
+
+      {/* 1. Requirements */}
+      <section id="rr-requirements" className="su-section report-section">
+        <div className="su-section-head">
+          <h2 className="su-section-title report-section-title"><span className="su-step">01</span>Procurement requirements</h2>
+        </div>
+        <div className="su-card report-card" style={{ marginBottom: 12 }}>
+          <div className="su-rec-label">Summary</div>
+          <p className="su-rec-text">{report.procurement_summary || 'No summary was returned for this request.'}</p>
+        </div>
+        {requirements.length ? (
+          <div className="su-req-grid extracted-reqs-grid">
+            {requirements.map((req, i) => (
+              <div key={i} className="su-req report-card">
+                <div className="su-req-cat">{req.category}</div>
+                <div className="su-req-param">{req.parameter}</div>
+                <div className="su-req-val">{req.value_spec}</div>
               </div>
-              <div style={{ fontSize: '0.9rem', fontWeight: '500', lineHeight: '1.5' }}>
-                {report.notice}
+            ))}
+          </div>
+        ) : (
+          <p className="su-muted" style={{ fontSize: '0.84rem' }}>
+            No structured technical parameters were extracted from the specification.
+          </p>
+        )}
+      </section>
+
+      {/* 2. Recommended IS */}
+      <section id="rr-recommended" className="su-section report-section">
+        <div className="su-section-head">
+          <h2 className="su-section-title report-section-title"><span className="su-step">02</span>Recommended Indian Standards</h2>
+          <span className="su-section-meta">{allStandards.length} standard(s)</span>
+        </div>
+
+        {allStandards.length ? (
+          allStandards.map((std, idx) => <RecommendationCard key={`${std.standard_number}-${idx}`} std={std} />)
+        ) : (
+          <div className="su-card report-card">
+            <h3 className="su-state-title" style={{ marginBottom: 6 }}>No applicable standard confirmed</h3>
+            <p className="su-rec-text">
+              No technically relevant Indian Standard was confirmed from the available catalogue and the extracted
+              requirements. This does not mean that no standard exists.
+            </p>
+            {missing.length === 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div className="su-rec-label">General checklist — add these details and re-run</div>
+                <ul className="su-gap-list">
+                  {GENERIC_SPEC_CHECKLIST.map((item) => <li key={item}>{item}</li>)}
+                </ul>
               </div>
-            </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* 3. Related / normative standards (report level) */}
+      <section id="rr-related" className="su-section report-section">
+        <div className="su-section-head">
+          <h2 className="su-section-title report-section-title"><span className="su-step">03</span>Related &amp; normative standards</h2>
+          <span className="su-section-meta">Test methods, normative references and allied products</span>
+        </div>
+        {relatedTop.length ? (
+          <RelatedTable items={relatedTop} />
+        ) : (
+          <p className="su-muted" style={{ fontSize: '0.84rem' }}>
+            No report-level related standards were returned. Per-standard references, where available, are listed on each
+            recommendation above.
+          </p>
+        )}
+      </section>
+
+      {/* 4. Certification */}
+      <section id="rr-certification" className="su-section report-section">
+        <div className="su-section-head">
+          <h2 className="su-section-title report-section-title"><span className="su-step">04</span>Certification &amp; regulatory guidance</h2>
+        </div>
+        {certGuidance.length ? (
+          certGuidance.map((c, i) => <CertificationItem key={i} cert={c} />)
+        ) : (
+          <div className="su-notice su-notice--warn report-card">
+            <strong>Certification applicability not confirmed</strong>
+            Verify the latest BIS notification or Quality Control Order with the issuing authority before tender publication.
+          </div>
+        )}
+      </section>
+
+      {/* 5. Tender gaps */}
+      <section id="rr-gaps" className="su-section report-section">
+        <div className="su-section-head">
+          <h2 className="su-section-title report-section-title"><span className="su-step">05</span>Tender gaps &amp; verification</h2>
+          <span className="su-section-meta">Resolve these before publishing the tender</span>
+        </div>
+
+        <div className="su-card report-card">
+          <div className="su-rec-label">Missing technical information ({missing.length})</div>
+          {missing.length ? (
+            <ul className="su-gap-list">{missing.map((m, i) => <li key={i}>{m}</li>)}</ul>
+          ) : (
+            <p className="su-muted" style={{ fontSize: '0.84rem' }}>No missing information was flagged for this specification.</p>
+          )}
+        </div>
+
+        {warnings.length > 0 && (
+          <div className="su-card report-card">
+            <div className="su-rec-label">Warnings ({warnings.length})</div>
+            <ul className="su-gap-list su-gap-list--danger">{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
           </div>
         )}
 
-        {/* Mandatory Internal AI Score Disclaimer */}
-        <div className="disclaimer-box report-card" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '14px 18px', marginBottom: '24px', color: '#1e40af', fontSize: '0.85rem', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-          <span style={{ fontSize: '1.2rem' }}>ℹ️</span>
-          <div>
-            <strong>AI Retrieval Match Score Notice:</strong>
-            <div style={{ marginTop: '2px', lineHeight: '1.4' }}>
-              {report.disclaimer || "This score is an internal semantic retrieval indicator. It does not represent official BIS approval, compliance, certification, legal validity, or applicability."}
-            </div>
-          </div>
-        </div>
-
-        {/* Section 1: Procurement Summary */}
-        <div className="report-section report-card" style={{ marginBottom: '28px', background: '#f8fafc', borderLeft: '4px solid #2563eb', padding: '16px 20px', borderRadius: '4px' }}>
-          <h3 className="report-section-title" style={{ margin: '0 0 8px 0', fontSize: '1.05rem', color: '#1e293b' }}>1. Procurement Requirement Summary</h3>
-          <p style={{ margin: 0, color: '#334155', fontSize: '0.95rem', lineHeight: '1.5' }}>
-            {report.procurement_summary}
-          </p>
-        </div>
-
-        {/* Section 2: Missing Technical Information */}
-        <div className="report-section report-card" style={{ marginBottom: '28px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '8px', padding: '18px 20px' }}>
-          <h3 className="report-section-title" style={{ margin: '0 0 10px 0', fontSize: '1.05rem', color: '#c2410c', fontWeight: '700' }}>
-            2. Missing Technical Information Required for Accurate Standards Matching
-          </h3>
-          {report.missing_requirements && report.missing_requirements.length > 0 ? (
-            <ul style={{ margin: 0, paddingLeft: '20px', color: '#9a3412', fontSize: '0.88rem', lineHeight: '1.6' }}>
-              {report.missing_requirements.map((item, mIdx) => (
-                <li key={mIdx}>{item}</li>
+        <div className="su-card report-card">
+          <div className="su-rec-label">Standards requiring official verification ({needsVerification.length})</div>
+          {needsVerification.length ? (
+            <ul className="su-list">
+              {needsVerification.map((v, i) => (
+                <li key={i}>
+                  <div className="su-list-top">
+                    <span className="su-code">{v.standard_number}</span>
+                    <Badge>{v.verification_status || 'Verification required'}</Badge>
+                  </div>
+                  <div>{v.title}</div>
+                  <a
+                    className="su-link no-print"
+                    href={v.source_url || BIS_PORTAL_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {v.source_url ? 'Open source record ↗' : 'Verify on the BIS portal ↗'}
+                  </a>
+                </li>
               ))}
             </ul>
           ) : (
-            <p style={{ margin: 0, color: '#9a3412', fontSize: '0.88rem' }}>
-              No critical technical information is missing based on the provided input.
-            </p>
+            <p className="su-muted" style={{ fontSize: '0.84rem' }}>No standards were flagged for separate verification.</p>
           )}
         </div>
 
-        {/* Section 3: Extracted Technical Requirements */}
-        {report.extracted_requirements && report.extracted_requirements.length > 0 && (
-          <div className="report-section" style={{ marginBottom: '32px' }}>
-            <h3 className="report-section-title" style={{ fontSize: '1.1rem', color: '#1e293b', marginBottom: '14px', borderBottom: '2px solid #e2e8f0', paddingBottom: '6px' }}>
-              3. Extracted Technical Requirements
-            </h3>
-            <div className="extracted-reqs-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
-              {report.extracted_requirements.map((req, idx) => (
-                <div key={idx} className="report-card" style={{ background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 16px' }}>
-                  <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
-                    {req.category}
+        {excluded.length > 0 && (
+          <div className="su-card report-card excluded-standards-container">
+            <div className="su-rec-label">Excluded candidates ({excluded.length})</div>
+            <p className="su-muted" style={{ fontSize: '0.8rem', marginBottom: 10 }}>
+              Retrieved by search but excluded due to product-domain or parameter mismatch.
+            </p>
+            <ul className="su-list">
+              {excluded.map((ex, i) => (
+                <li key={i}>
+                  <div className="su-list-top">
+                    <span className="su-code">{ex.standard_number}</span>
+                    {ex.category && <Badge tone="neutral">{ex.category}</Badge>}
                   </div>
-                  <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.95rem', marginTop: '2px' }}>
-                    {req.parameter}
-                  </div>
-                  <div style={{ fontSize: '0.85rem', color: '#475569', marginTop: '4px' }}>
-                    <span style={{ background: '#ffffff', padding: '2px 6px', borderRadius: '4px', border: '1px solid #cbd5e1' }}>
-                      {req.value_spec}
-                    </span>
-                  </div>
-                </div>
+                  <div>{ex.title}</div>
+                  <div className="su-muted" style={{ fontSize: '0.78rem', marginTop: 3 }}>Reason: {ex.exclusion_reason}</div>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         )}
+      </section>
 
-        {/* Section 4: Recommended & Potentially Applicable Standards */}
-        <div className="report-section" style={{ marginBottom: '36px' }}>
-          <h3 className="report-section-title" style={{ fontSize: '1.1rem', color: '#1e293b', marginBottom: '16px', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>
-            4. Recommended & Potentially Applicable Standards
-          </h3>
-
-          {((report.recommended_standards && report.recommended_standards.length > 0) ||
-            (report.potentially_applicable_standards && report.potentially_applicable_standards.length > 0)) ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              {[...(report.recommended_standards || []), ...(report.potentially_applicable_standards || [])].map((std, idx) => {
-                const badgeStyle = getStatusBadgeStyle(std.applicability_status);
-                const scoreVal = std.internal_match_score !== undefined && std.internal_match_score !== null
-                  ? std.internal_match_score
-                  : (std.relevance_score ? (std.relevance_score / 100.0) : 0.75);
-
-                return (
-                  <div key={idx} className="report-card" style={{ border: '1px solid #cbd5e1', borderRadius: '10px', overflow: 'hidden', background: '#ffffff', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
-                    
-                    {/* Card Header with Distinct Field Formatting */}
-                    <div style={{ background: '#f8fafc', padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Standard</span>
-                          <span style={{ fontSize: '1.15rem', fontWeight: '800', color: '#1e293b' }}>
-                            {std.standard_number}
-                          </span>
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Applicability</span>
-                          <span style={{ fontSize: '0.8rem', fontWeight: '700', padding: '4px 10px', borderRadius: '12px', ...badgeStyle }}>
-                            {std.applicability_status}
-                          </span>
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Revision</span>
-                          <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', background: std.revision_verification_status === 'Verified' ? '#dcfce7' : '#fff7ed', color: std.revision_verification_status === 'Verified' ? '#15803d' : '#c2410c', border: std.revision_verification_status === 'Verified' ? '1px solid #86efac' : '1px solid #fed7aa', fontWeight: '600' }}>
-                            {std.revision_verification_status || 'Unverified'}
-                          </span>
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Verification</span>
-                          <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', background: std.verification_status === 'Verified' ? '#dcfce7' : '#fef3c7', color: std.verification_status === 'Verified' ? '#15803d' : '#b45309', border: std.verification_status === 'Verified' ? '1px solid #86efac' : '1px solid #fde68a', fontWeight: '600' }}>
-                            {std.verification_status || 'Required'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#ffffff', border: '1px solid #e2e8f0', padding: '6px 12px', borderRadius: '8px' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '600' }}>Internal Retrieval Score:</span>
-                        <span style={{ fontWeight: '800', fontSize: '0.9rem', color: '#2563eb' }}>{scoreVal.toFixed(2)}</span>
-                        <span style={{ fontSize: '0.75rem', background: scoreVal >= 0.8 ? '#dcfce7' : (scoreVal >= 0.5 ? '#eff6ff' : '#fef3c7'), color: scoreVal >= 0.8 ? '#15803d' : (scoreVal >= 0.5 ? '#1d4ed8' : '#b45309'), padding: '2px 6px', borderRadius: '4px', fontWeight: '600' }}>
-                          {std.match_strength || 'Medium'} Match
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Card Body */}
-                    <div style={{ padding: '20px' }}>
-                      <h4 className="report-section-title" style={{ margin: '0 0 10px 0', fontSize: '1.05rem', color: '#0f172a' }}>
-                        {std.title}
-                      </h4>
-                      <p style={{ fontSize: '0.9rem', color: '#334155', lineHeight: '1.5', margin: '0 0 16px 0' }}>
-                        <strong>Scope:</strong> {std.scope || 'Covers general product requirements and testing.'}
-                      </p>
-
-                      <div style={{ background: '#f8fafc', borderLeft: '3px solid #3b82f6', padding: '12px 16px', borderRadius: '4px', marginBottom: '16px', fontSize: '0.9rem', color: '#1e293b' }}>
-                        <strong>Applicability Evaluation:</strong> {std.reasoning}
-                      </div>
-
-                      {/* Field Comparison Matrix Table */}
-                      {std.field_comparison_matrix && std.field_comparison_matrix.length > 0 && (
-                        <div style={{ marginBottom: '16px' }}>
-                          <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            📋 Field Comparison Matrix (Requirement vs Provision)
-                          </div>
-                          <table className="field-matrix-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', border: '1px solid #e2e8f0', borderRadius: '6px', overflow: 'hidden' }}>
-                            <thead>
-                              <tr style={{ background: '#f1f5f9', color: '#334155', textAlign: 'left' }}>
-                                <th className="matrix-col-param" style={{ padding: '8px 12px', borderBottom: '1px solid #cbd5e1' }}>Parameter</th>
-                                <th className="matrix-col-spec" style={{ padding: '8px 12px', borderBottom: '1px solid #cbd5e1' }}>Extracted Spec</th>
-                                <th className="matrix-col-prov" style={{ padding: '8px 12px', borderBottom: '1px solid #cbd5e1' }}>Standard Provision</th>
-                                <th className="matrix-col-res" style={{ padding: '8px 12px', borderBottom: '1px solid #cbd5e1' }}>Result</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {std.field_comparison_matrix.map((matrixItem, mIdx) => {
-                                const isMatch = matrixItem.result === 'Match';
-                                const isMismatch = matrixItem.result === 'Mismatch' || matrixItem.result === 'No Match';
-                                const rowBg = isMatch ? '#f0fdf4' : (isMismatch ? '#fef2f2' : '#ffffff');
-                                const badgeBg = isMatch ? '#dcfce7' : (isMismatch ? '#fee2e2' : '#f1f5f9');
-                                const badgeColor = isMatch ? '#15803d' : (isMismatch ? '#b91c1c' : '#475569');
-
-                                return (
-                                  <tr key={mIdx} style={{ background: rowBg, borderBottom: '1px solid #f1f5f9' }}>
-                                    <td className="matrix-col-param" style={{ padding: '8px 12px', fontWeight: '600', color: '#1e293b' }}>{matrixItem.parameter}</td>
-                                    <td className="matrix-col-spec" style={{ padding: '8px 12px', color: '#334155' }}>{matrixItem.required_value}</td>
-                                    <td className="matrix-col-prov" style={{ padding: '8px 12px', color: '#334155' }}>{matrixItem.standard_provision}</td>
-                                    <td className="matrix-col-res" style={{ padding: '8px 12px' }}>
-                                      <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: '700', background: badgeBg, color: badgeColor }}>
-                                        {matrixItem.result}
-                                      </span>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {/* Revision Status */}
-                      <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', padding: '10px 14px', borderRadius: '6px', fontSize: '0.85rem', color: '#c2410c' }}>
-                        <strong>Revision Status:</strong> {std.latest_revision || 'Revision status requires verification from the official BIS standards catalogue.'}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="report-card" style={{ padding: '20px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-              <div style={{ fontSize: '0.95rem', fontWeight: '700', color: '#334155', marginBottom: '8px' }}>
-                No potentially applicable Indian Standards matched this specification.
-              </div>
-              <p style={{ margin: '0 0 10px 0', fontSize: '0.88rem', color: '#475569', lineHeight: '1.5' }}>
-                No potentially applicable Indian Standards were identified from the available standards database for this procurement description.
-              </p>
-              <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', color: '#64748b', lineHeight: '1.5', fontStyle: 'italic' }}>
-                This does not mean that no standard exists. The result indicates that no technically relevant standard was confirmed using the available catalogue and extracted requirements.
-              </p>
-              <div style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '12px 16px', fontSize: '0.85rem', color: '#334155' }}>
-                <strong>Further verification is recommended after providing:</strong>
-                <ul style={{ margin: '6px 0 0 0', paddingLeft: '20px', lineHeight: '1.6', color: '#475569' }}>
-                  {getNoMatchBulletPoints(report.product_category).map((bItem, bIdx) => (
-                    <li key={bIdx}>{bItem}</li>
-                  ))}
-                </ul>
-              </div>
-              <div style={{ marginTop: '14px', fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic' }}>
-                No field comparison matrix is available because no technically applicable standard was identified.
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Section 5: Standards Requiring Official Verification */}
-        <div className="report-section" style={{ marginBottom: '32px' }}>
-          <h3 className="report-section-title" style={{ fontSize: '1.1rem', color: '#b45309', marginBottom: '14px', borderBottom: '2px solid #fde68a', paddingBottom: '6px' }}>
-            5. Standards Requiring Official Verification
-          </h3>
-          {report.standards_requiring_verification && report.standards_requiring_verification.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {report.standards_requiring_verification.map((vItem, vIdx) => (
-                <div key={vIdx} className="report-card" style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '14px 18px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                    <span style={{ fontWeight: '800', color: '#92400e', fontSize: '1rem' }}>
-                      {vItem.standard_number}
-                    </span>
-                    <span style={{ background: '#fef3c7', color: '#92400e', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid #fde68a' }}>
-                      Status: {vItem.verification_status || 'Verification Required'}
-                    </span>
-                  </div>
-                  <div style={{ color: '#1e293b', fontWeight: '600', marginTop: '4px', fontSize: '0.9rem' }}>
-                    {vItem.title}
-                  </div>
-                  <div style={{ marginTop: '8px', fontSize: '0.8rem' }}>
-                    <a href={vItem.source_url || `https://www.bis.gov.in/index.php/standard-search/?std_no=${vItem.standard_number}`} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontWeight: '600', textDecoration: 'underline' }}>
-                      Official BIS Standard Catalogue Verification Link ↗
-                    </a>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="report-card" style={{ padding: '16px', background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569', borderRadius: '6px', fontSize: '0.9rem' }}>
-              No standards require official verification based on the current analysis.
-            </div>
-          )}
-        </div>
-
-        {/* Section 6: Excluded or Not Applicable Standards */}
-        <div className="report-section" style={{ marginBottom: '32px' }}>
-          <h3 className="report-section-title" style={{ fontSize: '1.1rem', color: '#991b1b', marginBottom: '14px', borderBottom: '2px solid #fee2e2', paddingBottom: '6px' }}>
-            6. Excluded or Not Applicable Standards
-          </h3>
-          {report.excluded_standards && report.excluded_standards.length > 0 ? (
-            <div className="excluded-standards-container" style={{ background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '8px', padding: '16px' }}>
-              <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', color: '#7f1d1d' }}>
-                The following candidate standards were retrieved by vector search but <strong>excluded</strong> due to product domain or technical parameter mismatches:
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {report.excluded_standards.map((ex, eIdx) => (
-                  <div key={eIdx} className="report-card" style={{ background: '#ffffff', border: '1px solid #fca5a5', padding: '10px 14px', borderRadius: '6px', fontSize: '0.85rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontWeight: '700', color: '#991b1b' }}>{ex.standard_number}</span>
-                      <span style={{ background: '#fee2e2', color: '#991b1b', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: '600' }}>
-                        Category: {ex.category}
-                      </span>
-                    </div>
-                    <div style={{ color: '#334155', fontWeight: '600', marginTop: '2px' }}>{ex.title}</div>
-                    <div style={{ color: '#991b1b', fontSize: '0.8rem', marginTop: '4px' }}>
-                      <strong>Exclusion Reason:</strong> {ex.exclusion_reason}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="report-card" style={{ padding: '16px', background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569', borderRadius: '6px', fontSize: '0.9rem' }}>
-              No candidate standards were excluded for this procurement requirement.
-            </div>
-          )}
-        </div>
-
-        {/* Section 7: Certification and Regulatory Guidance */}
-        <div className="report-section" style={{ marginBottom: '32px' }}>
-          <h3 className="report-section-title" style={{ fontSize: '1.1rem', color: '#1e293b', marginBottom: '14px', borderBottom: '2px solid #e2e8f0', paddingBottom: '6px' }}>
-            7. Certification and Regulatory Guidance
-          </h3>
-
-          {report.certification_guidance && report.certification_guidance.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {report.certification_guidance.map((cert, cIdx) => (
-                <div key={cIdx} className="report-card" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                    <span style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.95rem' }}>
-                      {cert.certification_type}
-                    </span>
-                    <span style={{ background: cert.applicability === 'Confirmed Applicable' ? '#dcfce7' : '#fef3c7', color: cert.applicability === 'Confirmed Applicable' ? '#15803d' : '#b45309', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: '700' }}>
-                      Status: {cert.applicability}
-                    </span>
-                  </div>
-                  <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', color: '#475569', lineHeight: '1.4' }}>
-                    {cert.evidence_text || cert.verification_status}
-                  </p>
-                  {cert.source_url && (
-                    <div className="no-print" style={{ marginTop: '8px' }}>
-                      <a href={cert.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: '0.8rem', textDecoration: 'underline' }}>
-                        Official Source / Gazette Link ↗
-                      </a>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="report-card" style={{ padding: '16px', background: '#fff7ed', border: '1px solid #fed7aa', color: '#c2410c', borderRadius: '6px', fontSize: '0.85rem' }}>
-              Certification applicability could not be confirmed. Please verify the latest applicable BIS notification or Quality Control Order from the official authority.
-            </div>
-          )}
-        </div>
-
-        {/* Section 8: Legal Disclaimer & Verification Notice */}
-        <div className="disclaimer-box report-card" style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '16px', color: '#991b1b', fontSize: '0.85rem' }}>
-          <h3 className="report-section-title" style={{ margin: '0 0 6px 0', fontSize: '1rem', color: '#991b1b', fontWeight: '800' }}>
-            8. Legal Disclaimer & Verification Notice
-          </h3>
-          <ul style={{ margin: '6px 0 0 0', paddingLeft: '20px', lineHeight: '1.5' }}>
-            <li>The internal match score is an AI retrieval indicator and does not constitute official BIS compliance or certification.</li>
-            <li>Where exact revision dates or Quality Control Orders are unconfirmed in local records, manual verification from the official BIS portal (www.bis.gov.in) is required prior to tender publication.</li>
-          </ul>
-        </div>
-
-        {/* Printable Footer */}
-        <div className="print-footer" style={{ display: 'none' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>Generated by <strong>IS Procurement AI Engine</strong></div>
-            <div>Date: {report.created_at ? new Date(report.created_at).toLocaleDateString() : new Date().toLocaleDateString()}</div>
-            <div>AI-generated analysis requires official verification.</div>
+      {/* Sources & disclaimer */}
+      <section className="su-section report-section">
+        {sources.length > 0 && (
+          <div className="su-card report-card" style={{ marginBottom: 12 }}>
+            <div className="su-rec-label">Sources</div>
+            <ul className="su-evidence" style={{ marginTop: 0 }}>
+              {sources.map((s, i) => <li key={i}>{s}</li>)}
+            </ul>
           </div>
+        )}
+        <div className="su-notice su-notice--info disclaimer-box report-card">
+          <strong>About this report</strong>
+          {report.disclaimer || 'The match score is an internal AI retrieval indicator and does not represent official BIS approval, compliance or certification.'}
+          {' '}Confirm revisions, amendments and Quality Control Orders on the official BIS portal before tender publication.
         </div>
+      </section>
 
+      <div className="print-footer" style={{ display: 'none' }}>
+        Generated by the Indian Standards Procurement Engine · AI-generated analysis requires official verification.
       </div>
     </div>
   );
 }
 
+function RecommendationCard({ std }) {
+  const score = typeof std.internal_match_score === 'number' ? std.internal_match_score : null;
+  const matrix = std.field_comparison_matrix || [];
+  const related = std.related_standards || [];
+  const certs = std.certification_requirements || [];
+  const amendments = std.amendments || [];
+  const evidence = std.evidence || [];
+
+  return (
+    <article className="su-rec report-card">
+      <div className="su-rec-head">
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="su-rec-num">{std.standard_number}</span>
+            <Badge>{std.applicability_status}</Badge>
+          </div>
+          <div className="su-rec-title">{std.title}</div>
+        </div>
+        {score !== null && (
+          <div className="su-score" title="Internal retrieval indicator — not an official BIS compliance score">
+            <div className="su-score-val">{score.toFixed(2)}</div>
+            <div className="su-score-bar"><div style={{ width: `${Math.round(score * 100)}%` }} /></div>
+            <div className="su-score-label">{std.match_strength ? `${std.match_strength} match · ` : ''}internal score</div>
+          </div>
+        )}
+      </div>
+
+      <div className="su-rec-body">
+        {/* Reason */}
+        <div className="su-rec-block">
+          <div className="su-rec-label"><span className="su-step">A</span>Why this standard</div>
+          <p className="su-rec-text su-reason">{std.reasoning || 'No reasoning was returned for this standard.'}</p>
+          {std.scope && <p className="su-rec-text" style={{ marginTop: 10 }}><span className="su-muted">Scope — </span>{std.scope}</p>}
+          {evidence.length > 0 && (
+            <ul className="su-evidence">{evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
+          )}
+
+          {matrix.length > 0 && (
+            <div className="su-table-wrap" style={{ marginTop: 14 }}>
+              <table className="su-table field-matrix-table">
+                <thead>
+                  <tr>
+                    <th className="matrix-col-param">Parameter</th>
+                    <th className="matrix-col-spec">Required</th>
+                    <th className="matrix-col-prov">Standard provision</th>
+                    <th className="matrix-col-res">Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {matrix.map((m, i) => (
+                    <tr key={i}>
+                      <td className="matrix-col-param" style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{m.parameter}</td>
+                      <td className="matrix-col-spec">{m.required_value}</td>
+                      <td className="matrix-col-prov">{m.standard_provision}</td>
+                      <td className="matrix-col-res"><Badge>{m.result}</Badge></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Related / normative */}
+        <div className="su-rec-block">
+          <div className="su-rec-label"><span className="su-step">B</span>Related &amp; normative standards ({related.length})</div>
+          {related.length ? <RelatedTable items={related} /> : (
+            <p className="su-muted" style={{ fontSize: '0.82rem' }}>None linked for this standard.</p>
+          )}
+        </div>
+
+        {/* Version / status */}
+        <div className="su-rec-block">
+          <div className="su-rec-label"><span className="su-step">C</span>Version &amp; status</div>
+          <dl className="su-kv">
+            <div><dt>Latest revision</dt><dd className="su-mono">{std.latest_revision || 'Not confirmed'}</dd></div>
+            <div><dt>Revision check</dt><dd><Badge>{std.revision_verification_status || 'Unverified'}</Badge></dd></div>
+            <div>
+              <dt>Official verification</dt>
+              <dd>{std.verification_required === false ? <Badge tone="ok">Not required</Badge> : <Badge tone="warn">Required</Badge>}</dd>
+            </div>
+          </dl>
+          {amendments.length > 0 && (
+            <ul className="su-evidence" style={{ marginTop: 10 }}>{amendments.map((a, i) => <li key={i}>{a}</li>)}</ul>
+          )}
+        </div>
+
+        {/* Certification */}
+        <div className="su-rec-block">
+          <div className="su-rec-label"><span className="su-step">D</span>Certification ({certs.length})</div>
+          {certs.length ? certs.map((c, i) => <CertificationItem key={i} cert={c} compact />) : (
+            <p className="su-muted" style={{ fontSize: '0.82rem' }}>No certification scheme linked to this standard.</p>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function RelatedTable({ items }) {
+  return (
+    <div className="su-table-wrap">
+      <table className="su-table">
+        <thead>
+          <tr>
+            <th className="rel-col-num">IS number</th>
+            <th className="rel-col-title">Title</th>
+            <th className="rel-col-type">Relationship</th>
+            <th className="rel-col-stat hide-sm">Verification</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((r, i) => (
+            <tr key={`${r.standard_number}-${i}`}>
+              <td className="rel-col-num su-code" style={{ whiteSpace: 'nowrap' }}>{r.standard_number}</td>
+              <td className="rel-col-title">
+                {r.title}
+                {r.description && <div className="su-muted" style={{ fontSize: '0.76rem', marginTop: 2 }}>{r.description}</div>}
+              </td>
+              <td className="rel-col-type"><Badge tone="neutral">{humanize(r.relationship_type)}</Badge></td>
+              <td className="rel-col-stat hide-sm" style={{ fontSize: '0.76rem' }}>{r.verification_status || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CertificationItem({ cert, compact = false }) {
+  const facts = [
+    ['IS number', cert.relevant_is_number],
+    ['Instrument', cert.regulatory_instrument],
+    ['Evidence date', cert.evidence_date],
+    ['Effective', cert.effective_date],
+    ['Evidence source', cert.evidence_source],
+  ].filter(([, v]) => v && v !== 'Unverified');
+
+  return (
+    <div
+      className={compact ? undefined : 'su-card report-card'}
+      style={compact ? { border: '1px solid var(--border-color)', borderRadius: 5, padding: '10px 12px', marginBottom: 8 } : undefined}
+    >
+        <div className="su-list-top">
+          <strong style={{ fontSize: '0.9rem' }}>{cert.certification_type}</strong>
+          <Badge>{cert.applicability}</Badge>
+        </div>
+        {(cert.explanation || cert.evidence_text) && (
+          <p className="su-rec-text" style={{ fontSize: '0.84rem', marginTop: 4 }}>{cert.explanation || cert.evidence_text}</p>
+        )}
+        {facts.length > 0 && (
+          <dl className="su-kv" style={{ marginTop: 10 }}>
+            {facts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+          </dl>
+        )}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+          {cert.verification_status && <span className="su-muted" style={{ fontSize: '0.76rem' }}>{cert.verification_status}</span>}
+          {cert.source_url && (
+            <a className="su-link no-print" href={cert.source_url} target="_blank" rel="noopener noreferrer">Official source ↗</a>
+          )}
+        </div>
+        {!compact && cert.disclaimer && (
+          <div className="su-muted" style={{ fontSize: '0.74rem', marginTop: 6, fontStyle: 'italic' }}>{cert.disclaimer}</div>
+        )}
+    </div>
+  );
+}

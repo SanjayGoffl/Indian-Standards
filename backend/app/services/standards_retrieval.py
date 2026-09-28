@@ -11,12 +11,21 @@ import time
 import logging
 from typing import List, Dict, Any, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, case
 
 from app.core.models import IndianStandard
 from app.rag.chromadb_service import chroma_service
 
 logger = logging.getLogger(__name__)
+
+# Words too generic to discriminate between ~20k catalogue titles.
+_KEYWORD_STOPWORDS = {
+    "with", "from", "that", "this", "shall", "should", "must", "will", "have", "been", "their",
+    "required", "requirement", "requirements", "tender", "procurement", "supply", "product",
+    "products", "item", "items", "quantity", "specification", "specifications", "standard",
+    "standards", "general", "including", "suitable", "based", "used", "using", "type", "grade",
+}
+WITHDRAWN = "Withdrawn"
 
 
 def extract_is_numbers(text: str) -> List[str]:
@@ -26,6 +35,36 @@ def extract_is_numbers(text: str) -> List[str]:
     """
     matches = re.findall(r"IS\s*(\d+)", text, re.IGNORECASE)
     return list(set(matches))
+
+
+def _is_exact_number_match(standard_number: str, is_num: str) -> bool:
+    """'IS 694' must match 'IS 694:2010' / 'IS 694 (Part 1)', never 'IS 6940' or 'IS 16940'."""
+    return bool(re.search(rf"(?<![\d])IS\s*{re.escape(is_num)}(?!\d)", standard_number or "", re.IGNORECASE))
+
+
+def _query_keywords(query_text: str) -> List[str]:
+    words = re.findall(r"[A-Za-z][A-Za-z0-9\-]{3,}", query_text)
+    keywords, seen = [], set()
+    for w in words:
+        lw = w.lower()
+        if lw in _KEYWORD_STOPWORDS or lw in seen:
+            continue
+        seen.add(lw)
+        keywords.append(w)
+    return keywords[:8]
+
+
+def _active_successor(db: Session, std: IndianStandard):
+    """Latest active standard sharing base number and part with a withdrawn one."""
+    if not std.base_standard_number:
+        return None
+    q = db.query(IndianStandard).filter(
+        IndianStandard.base_standard_number == std.base_standard_number,
+        IndianStandard.status != WITHDRAWN,
+        IndianStandard.id != std.id,
+    )
+    q = q.filter(IndianStandard.part_number == std.part_number) if std.part_number else q.filter(IndianStandard.part_number.is_(None))
+    return q.order_by(IndianStandard.revision_year.desc()).first()
 
 
 def retrieve_candidate_standards(db: Session, query_text: str, product_category: str = None, top_k: int = 10) -> List[IndianStandard]:
@@ -52,14 +91,20 @@ def retrieve_candidate_standards_with_metrics(
     candidate_map: Dict[str, IndianStandard] = {}
     is_numbers = extract_is_numbers(query_text)
 
-    # 1. Exact IS Number Lookup (Highest Priority)
+    # 1. Exact IS Number Lookup (Highest Priority) — digit-boundary exact, not substring
+    explicitly_cited_ids = set()
     for is_num in is_numbers:
-        exact_matches = db.query(IndianStandard).filter(
-            IndianStandard.standard_number.ilike(f"%IS {is_num}%") |
-            IndianStandard.standard_number.ilike(f"%IS{is_num}%")
-        ).all()
-        for std in exact_matches:
-            candidate_map[std.id] = std
+        prefiltered = db.query(IndianStandard).filter(
+            or_(
+                IndianStandard.base_standard_number == f"IS {is_num}",
+                IndianStandard.standard_number.ilike(f"%IS {is_num}%"),
+                IndianStandard.standard_number.ilike(f"%IS{is_num}%"),
+            )
+        ).limit(200).all()
+        for std in prefiltered:
+            if _is_exact_number_match(std.standard_number, is_num):
+                candidate_map[std.id] = std
+                explicitly_cited_ids.add(std.id)
 
     # 2. Vector Search via ChromaDB
     try:
@@ -80,34 +125,51 @@ def retrieve_candidate_standards_with_metrics(
     except Exception as e:
         logger.warning(f"Vector search retrieval warning: {str(e)}")
 
-    # 3. Keyword Search in PostgreSQL
-    words = [w for w in query_text.split() if len(w) > 3]
-    keywords = words[:6]
+    # 3. Keyword + metadata search, ranked in SQL by how many query terms each standard matches
+    keywords = _query_keywords(query_text)
 
     filters = []
+    score_terms = []
     if product_category:
-        cat_words = [w for w in product_category.split() if len(w) > 3]
+        cat_words = [w for w in product_category.split() if len(w) > 3 and w.lower() not in _KEYWORD_STOPWORDS]
         for cw in cat_words:
             filters.append(IndianStandard.category.ilike(f"%{cw}%"))
             filters.append(IndianStandard.sector.ilike(f"%{cw}%"))
+            score_terms.append(case((IndianStandard.category.ilike(f"%{cw}%"), 2), else_=0))
 
     for kw in keywords:
         filters.append(IndianStandard.title.ilike(f"%{kw}%"))
         filters.append(IndianStandard.scope.ilike(f"%{kw}%"))
+        score_terms.append(case((IndianStandard.title.ilike(f"%{kw}%"), 3), else_=0))
+        score_terms.append(case((IndianStandard.scope.ilike(f"%{kw}%"), 1), else_=0))
 
     if filters:
-        sql_matches = db.query(IndianStandard).filter(or_(*filters)).limit(top_k * 2).all()
+        keyword_score = sum(score_terms[1:], score_terms[0])
+        sql_matches = (
+            db.query(IndianStandard)
+            .filter(or_(*filters))
+            .order_by(keyword_score.desc(), case((IndianStandard.status == WITHDRAWN, 1), else_=0))
+            .limit(top_k * 5)
+            .all()
+        )
         for std in sql_matches:
             candidate_map[std.id] = std
 
-    raw_retrieved_count = len(candidate_map)
+    # 4. Revision handling: a withdrawn standard is replaced by its active successor
+    # (same base number and part) unless the user explicitly cited that exact number,
+    # in which case both are kept so the report can flag the supersession.
+    for std in list(candidate_map.values()):
+        if std.status != WITHDRAWN:
+            continue
+        successor = _active_successor(db, std)
+        if successor:
+            candidate_map[successor.id] = successor
+        if std.id not in explicitly_cited_ids and successor:
+            candidate_map.pop(std.id, None)
 
-    # 4. Fallback if empty
-    if not candidate_map:
-        all_stds = db.query(IndianStandard).limit(top_k).all()
-        for std in all_stds:
-            candidate_map[std.id] = std
-        raw_retrieved_count = len(candidate_map)
+    raw_retrieved_count = len(candidate_map)
+    # No "return arbitrary rows" fallback: at catalogue scale that injects unrelated,
+    # cross-domain standards. An empty result is reported as "no standard confirmed".
 
     candidates = list(candidate_map.values())
 
@@ -116,8 +178,11 @@ def retrieve_candidate_standards_with_metrics(
         score = 0.0
         # Exact IS number match boost
         for is_num in is_numbers:
-            if f"IS {is_num}" in std.standard_number or f"IS{is_num}" in std.standard_number:
+            if _is_exact_number_match(std.standard_number, is_num):
                 score += 10.0
+
+        if std.status == WITHDRAWN:
+            score -= 5.0
 
         # Category alignment
         if product_category and std.category:

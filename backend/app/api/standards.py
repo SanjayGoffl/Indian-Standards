@@ -4,7 +4,7 @@ Provides catalog browsing, search, detail view, and admin seed triggers for Indi
 """
 
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
@@ -76,13 +76,42 @@ def trigger_seed_standards(
 
 @router.post("/sync")
 def sync_standards_ingestion(
+    background_tasks: BackgroundTasks,
+    source: str = Query("mock", pattern="^(mock|bis_live)$"),
+    max_number: int = Query(20000, ge=1, le=30000),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
     """
     Triggers incremental standards sync via the BIS connector ingestion pipeline.
     Enforces JWT authentication and Admin role.
+
+    source="mock" (default) re-syncs the small built-in sample set synchronously.
+    source="bis_live" sweeps BIS's own public "Know Your Standards" search API
+    for real catalogue coverage (numbers 1..max_number) and runs in the
+    background since a full sweep takes several minutes; progress and results
+    land in /api/standards/ingest-logs once the background task completes.
     """
+    if source == "bis_live":
+        from app.core.database import SessionLocal
+        from app.services.bis_live_connector import BISLiveAPIConnector
+        from app.services.standards_ingestion import ingest_standards
+
+        def run_live_sync():
+            session = SessionLocal()
+            try:
+                connector = BISLiveAPIConnector(max_number=max_number)
+                ingest_standards(session, connector)
+            finally:
+                session.close()
+
+        background_tasks.add_task(run_live_sync)
+        return {
+            "message": f"Live BIS catalogue sync started in the background (sweeping standard numbers 1..{max_number}). "
+                       f"This can take several minutes. Check /api/standards/ingest-logs to see when it completes.",
+            "status": "started",
+        }
+
     from app.services.bis_connector import MockBISConnector
     from app.services.standards_knowledge_base import INITIAL_INDIAN_STANDARDS_SEED
     from app.services.standards_ingestion import ingest_standards
