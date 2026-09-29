@@ -102,6 +102,19 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
+    def __init__(self, **kwargs):
+        if "hashed_password" in kwargs and "password_hash" not in kwargs:
+            kwargs["password_hash"] = kwargs.pop("hashed_password")
+        super().__init__(**kwargs)
+
+    @property
+    def hashed_password(self):
+        return self.password_hash
+
+    @hashed_password.setter
+    def hashed_password(self, value):
+        self.password_hash = value
+
 
 
 class Conversation(Base):

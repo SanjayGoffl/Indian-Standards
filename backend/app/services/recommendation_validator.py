@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Tuple
 from app.core.models import IndianStandard
+from app.services.compliance_engine import generic_role
 
 logger = logging.getLogger(__name__)
 
@@ -619,23 +620,37 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
         for req in extracted_reqs[:5]:
             p_name = req.get("parameter") or req.get("category") or "Requirement"
             v_val = req.get("value_spec") or "Required"
-            p_text = f"{p_name} {v_val}".lower()
-            req_words = [w for w in re.findall(r'\b[a-zA-Z]{4,}\b', p_text) if w not in ["procurement", "supply", "request", "requirement", "intended", "used"]]
+            v_val_str = str(v_val).strip()
+            p_text = f"{p_name} {v_val_str}".lower()
+            req_words = [w for w in re.findall(r'\b[a-zA-Z]{4,}\b', p_text) if w not in ["procurement", "supply", "request", "requirement", "intended", "used", "required"]]
             word_match = any(w in comb_text for w in req_words) if req_words else False
 
-            if is_domain_match and word_match:
-                res = "Potential Match"
-            elif is_domain_match:
-                res = "Potential Match"
-            else:
+            is_missing = (
+                not v_val_str or
+                v_val_str.lower() in ["not provided", "missing", "not specified", "unknown", "none", "n/a"] or
+                "missing" in v_val_str.lower() or
+                "not provided" in v_val_str.lower()
+            )
+
+            if not is_domain_match:
                 res = "Mismatch"
+                evidence = "Domain mismatch with target procurement category."
+            elif is_missing:
+                res = "Missing Input"
+                evidence = "Parameter value not specified in procurement request; cannot confirm compliance."
+            elif word_match:
+                res = "Potential Match"
+                evidence = f"Catalogue text indicates alignment on {p_name} ({v_val_str})."
+            else:
+                res = "Requires Official Verification"
+                evidence = "Technical provision not explicitly mentioned in catalogue metadata; verification required against official standard document."
 
             matrix.append({
                 "parameter": p_name,
-                "procurement_requirement": v_val,
-                "required_value": v_val,
-                "indexed_standard_evidence": "Technical provision requires verification against the official standard document." if res == "Potential Match" else "Not Covered",
-                "standard_provision": "Technical provision requires verification against the official standard document." if res == "Potential Match" else "Not Covered",
+                "procurement_requirement": v_val_str,
+                "required_value": v_val_str,
+                "indexed_standard_evidence": evidence,
+                "standard_provision": evidence,
                 "evaluation": res,
                 "result": res
             })
@@ -645,22 +660,32 @@ def generate_field_comparison_matrix(candidate: IndianStandard, extracted_reqs: 
 def calculate_technical_match_score(matrix: List[Dict[str, Any]]) -> Tuple[float, str]:
     """
     Calculates explainable score (0.0 to 1.0) and match strength label based on Field Comparison Matrix.
+    Enforces that retrieval score != validation score, and never awards 1.0 or high score
+    when requirements are missing or validation is weak.
     """
-    domain_item = next((item for item in matrix if item["parameter"] in ["Product Category", "Product category"]), None)
-    if domain_item and domain_item["result"] in ["Mismatch", "Not Applicable"]:
+    domain_item = next((item for item in matrix if item.get("parameter") in ["Product Category", "Product category"]), None)
+    if domain_item and domain_item.get("result") in ["Mismatch", "Not Applicable", "No Match"]:
         return 0.0, "Mismatch"
 
-    matches = sum(1 for item in matrix if item["result"] in ["Match", "Potential Match", "Confirmed Match"])
+    mismatches = sum(1 for item in matrix if item.get("result") in ["Mismatch", "Not Applicable", "No Match"] and item != domain_item)
+    if mismatches > 0:
+        return 0.45, "Low"
+
+    matches = sum(1 for item in matrix if item.get("result") in ["Match", "Potential Match", "Confirmed Match"])
+    missing_count = sum(1 for item in matrix if item.get("result") == "Missing Input")
     total = len(matrix)
 
-    core_item = next((item for item in matrix if item["parameter"] == "Core Insulation"), None)
-    core_mismatch = (core_item and core_item["result"] == "Mismatch")
+    if total == 0:
+        return 0.50, "Medium"
 
-    if core_mismatch:
-        score = 0.45
-        strength = "Low"
+    raw_score = matches / float(total)
+
+    if missing_count > 0:
+        # Never give a high/1.00 score when requirements are missing
+        score = min(round(raw_score, 2), 0.55)
+        strength = "Medium" if score >= 0.50 else "Low"
     else:
-        score = round(matches / float(total), 2)
+        score = round(raw_score, 2)
         if score >= 0.75:
             strength = "High"
         elif score >= 0.50:
@@ -717,21 +742,25 @@ def classify_standard_applicability(
     internal_score: float,
     match_strength: str,
     matrix: List[Dict[str, Any]],
-    has_verified_qco: bool
+    has_verified_qco: bool = False
 ) -> Dict[str, Any]:
     """
-    Assigns strict applicability status based on field matrix and evidence.
+    Assigns strict applicability status based on field matrix and evidence dynamically for all domains.
+    PRIMARY/SECONDARY only after validation passes.
     """
-    core_item = next((item for item in matrix if item["parameter"] == "Core Insulation"), None)
-    core_mismatch = (core_item and core_item["result"] == "Mismatch")
+    domain_item = next((item for item in matrix if item.get("parameter") in ["Product Category", "Product category"]), None)
+    has_domain_mismatch = bool(domain_item and domain_item.get("result") in ["Mismatch", "Not Applicable", "No Match"])
 
-    if internal_score == 0.0:
+    has_hard_mismatch = any(item.get("result") in ["Mismatch", "Not Applicable", "No Match"] for item in matrix if item != domain_item)
+    missing_count = sum(1 for item in matrix if item.get("result") == "Missing Input")
+
+    if internal_score == 0.0 or has_domain_mismatch:
         status = "Not Applicable"
-    elif core_mismatch:
+    elif has_hard_mismatch:
         status = "Related but Technically Mismatched"
-    elif internal_score >= 0.75 and has_verified_qco:
+    elif internal_score >= 0.75 and missing_count == 0:
         status = "Recommended"
-    elif internal_score >= 0.50:
+    elif internal_score >= 0.40:
         status = "Potentially Applicable"
     else:
         status = "Verification Required"
@@ -741,6 +770,74 @@ def classify_standard_applicability(
         "internal_match_score": internal_score,
         "match_strength": match_strength
     }
+
+
+def finalize_recommendation_buckets(report: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Makes the recommendation buckets mutually exclusive and derives the summary counts from the
+    final lists (single source of truth). Priority when a standard appears in several buckets:
+    PRIMARY > SECONDARY_CONDITIONAL > RELATED > EXCLUDED.
+    """
+    buckets = [
+        ("recommended_standards", "PRIMARY", "primary"),
+        ("potentially_applicable_standards", "SECONDARY_CONDITIONAL", "secondary_conditional"),
+        ("related_standards", "RELATED", "related"),
+        ("test_installation_standards", "TEST_INSTALLATION", "test_installation"),
+        ("excluded_standards", "EXCLUDED", "excluded"),
+    ]
+    # Test-method / installation documents are never product recommendations, whichever path
+    # produced the report (the schema-driven engine already separates them).
+    report.setdefault("test_installation_standards", [])
+    for key in ("recommended_standards", "potentially_applicable_standards"):
+        keep = []
+        for item in report.get(key, []):
+            if not item.get("engine_verified") and generic_role(item.get("title", "")):
+                item["relationship_type"] = generic_role(item["title"])
+                report["test_installation_standards"].append(item)
+            else:
+                keep.append(item)
+        report[key] = keep
+    claimed = set()
+    summary: Dict[str, Any] = {}
+    for key, role, short in buckets:
+        kept = []
+        for item in report.get(key, []):
+            norm = normalize_standard_number(item.get("standard_number", ""))
+            if norm in claimed:
+                continue
+            claimed.add(norm)
+            item["recommendation_role"] = role
+            kept.append(item)
+        report[key] = kept
+        summary[short] = len(kept)
+        summary[f"{short}_standards"] = [i["standard_number"] for i in kept]
+    summary["total_evaluated"] = sum(summary[s] for _, _, s in buckets)
+    report["recommendation_summary"] = summary
+    report["final_recommendations"] = {
+        "primary_recommended": report.get("recommended_standards", []),
+        "secondary_conditional": report.get("potentially_applicable_standards", []),
+        "test_installation": report.get("test_installation_standards", []),
+        "related": report.get("related_standards", []),
+        "excluded": report.get("excluded_standards", []),
+    }
+    report["excluded_candidates"] = [
+        {
+            "standard_number": ex.get("standard_number", ""),
+            "title": ex.get("title", ""),
+            "category": ex.get("category", "Unspecified"),
+            "gate": ex.get("gate", "Domain or Technical Mismatch"),
+            "mismatch_type": ex.get("mismatch_type", "Product Category Mismatch"),
+            "exclusion_reason": ex.get("exclusion_reason", "")
+        }
+        for ex in report.get("excluded_standards", [])
+    ]
+
+    if summary["primary"]:
+        report["overall_status"] = "Applicable Standard Confirmed"
+        report["notice"] = None
+    elif summary["secondary_conditional"] and "Verification Required" not in (report.get("overall_status") or ""):
+        report["overall_status"] = "Potential Standards Identified - Verification Required"
+    return report
 
 
 def ensure_item_provenance_and_scope(item: Dict[str, Any], default_ver_status: str = "Verification Required") -> Dict[str, Any]:
@@ -798,6 +895,9 @@ def sanitize_and_validate_report(report: Dict[str, Any]) -> Dict[str, Any]:
     """
     cat = (report.get("product_category") or "").lower()
     is_cable = any(w in cat for w in ["cable", "wire", "conductor"])
+    # Reports produced by the schema-driven engine only contain user-stated requirements and
+    # metadata-verified standards; the legacy keyword scrubbing below must not touch them.
+    is_engine = bool(report.get("requirements_schema"))
 
     cable_param_names = {"core insulation", "pvc cable insulation", "voltage rating", "conductor material", "frls requirement", "high voltage test", "cable type", "working voltage"}
 
@@ -805,7 +905,7 @@ def sanitize_and_validate_report(report: Dict[str, Any]) -> Dict[str, Any]:
         cleaned_reqs = []
         for req in report.get("extracted_requirements", []):
             param = (req.get("parameter") or "").lower()
-            if param in cable_param_names:
+            if param in cable_param_names and not is_engine:
                 continue
             req["source_type"] = "User Input Specification"
             req["source"] = "User Procurement Specification"
@@ -822,7 +922,7 @@ def sanitize_and_validate_report(report: Dict[str, Any]) -> Dict[str, Any]:
         cleaned_missing = []
         for m in report.get("missing_requirements", []):
             m_lower = m.lower()
-            if any(cp in m_lower for cp in ["core insulation", "voltage rating", "conductor material", "frls", "cable size"]):
+            if not is_engine and any(cp in m_lower for cp in ["core insulation", "voltage rating", "conductor material", "frls", "cable size"]):
                 continue
             cleaned_missing.append(m)
         report["missing_requirements"] = cleaned_missing
@@ -837,8 +937,8 @@ def sanitize_and_validate_report(report: Dict[str, Any]) -> Dict[str, Any]:
     for item in rec_list + pot_list:
         std_num = item.get("standard_number") or ""
 
-        # Validate domain alignment for non-cable categories
-        is_match, reason = validate_product_category(
+        # Validate domain alignment (engine items were already gated on catalogue metadata)
+        is_match, reason = (True, "") if item.get("engine_verified") else validate_product_category(
             item.get("category", ""),
             item.get("title", ""),
             report.get("product_category", ""),
@@ -857,7 +957,7 @@ def sanitize_and_validate_report(report: Dict[str, Any]) -> Dict[str, Any]:
             ex_list.append(ensure_item_provenance_and_scope(ex_item))
             continue
 
-        if not is_cable:
+        if not is_cable and not is_engine:
             matrix = item.get("field_comparison_matrix", [])
             clean_matrix = []
             for m_item in matrix:
@@ -886,6 +986,14 @@ def sanitize_and_validate_report(report: Dict[str, Any]) -> Dict[str, Any]:
             seen_ex.add(num)
             clean_ex.append(ensure_item_provenance_and_scope(ex))
     report["excluded_standards"] = clean_ex
+    report["excluded_candidates"] = clean_ex
+    report["final_recommendations"] = {
+        "primary_recommended": new_rec,
+        "secondary_conditional": new_pot,
+        "test_installation": report.get("test_installation_standards", []),
+        "related": report.get("related_standards", []),
+        "excluded": clean_ex
+    }
 
     # Enforce provenance & scope_label on standards_requiring_verification and related_standards
     report["standards_requiring_verification"] = [
@@ -893,6 +1001,9 @@ def sanitize_and_validate_report(report: Dict[str, Any]) -> Dict[str, Any]:
     ]
     report["related_standards"] = [
         ensure_item_provenance_and_scope(item) for item in report.get("related_standards", [])
+    ]
+    report["test_installation_standards"] = [
+        ensure_item_provenance_and_scope(item) for item in report.get("test_installation_standards", [])
     ]
 
     # Enforce QCO Verification rules on certification guidance
@@ -936,7 +1047,8 @@ def sanitize_and_validate_report(report: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     missing_inputs = report.get("missing_requirements", [])
-    if not missing_inputs or len(missing_inputs) < 2:
+    is_piping = any(w in cat for w in ["pipe", "piping", "hdpe", "water supply", "plumbing"])
+    if is_piping and not is_engine and (not missing_inputs or len(missing_inputs) < 2):
         missing_inputs = [
             "Pressure rating (PN rating / working pressure)",
             "Nominal pipe outer diameter and wall thickness / SDR classification",

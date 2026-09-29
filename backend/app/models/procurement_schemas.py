@@ -27,6 +27,8 @@ class RelatedStandardInfo(BaseModel):
     relationship_type: str  # normative_reference, test_method, safety, installation, terminology, material, related_product
     description: Optional[str] = None
     verification_status: Optional[str] = "Verification required from official BIS catalogue."
+    matched_requirement: Optional[str] = None
+    recommendation_role: Optional[str] = None
 
 
 class CertificationInfo(BaseModel):
@@ -50,6 +52,9 @@ class ExcludedStandardItem(BaseModel):
     title: str
     category: str
     exclusion_reason: str
+    gate: Optional[str] = None
+    mismatch_type: Optional[str] = None
+    recommendation_role: Optional[str] = None
 
 
 class StandardRecommendationItem(BaseModel):
@@ -68,6 +73,7 @@ class StandardRecommendationItem(BaseModel):
     certification_requirements: List[CertificationInfo] = Field(default_factory=list)
     evidence: List[str] = Field(default_factory=list)
     verification_required: bool = True
+    recommendation_role: Optional[str] = None  # PRIMARY, SECONDARY_CONDITIONAL
 
 
 class StandardVerificationItem(BaseModel):
@@ -86,11 +92,19 @@ class ProcurementAnalysisResponse(BaseModel):
     potentially_applicable_standards: List[StandardRecommendationItem] = Field(default_factory=list)
     standards_requiring_verification: List[StandardVerificationItem] = Field(default_factory=list)
     related_standards: List[RelatedStandardInfo] = Field(default_factory=list)
+    test_installation_standards: List[RelatedStandardInfo] = Field(default_factory=list)
     excluded_standards: List[ExcludedStandardItem] = Field(default_factory=list)
     certification_guidance: List[CertificationInfo] = Field(default_factory=list)
     missing_requirements: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     sources: List[str] = Field(default_factory=list)
+    retrieved_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    validated_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    excluded_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    final_recommendations: Optional[Dict[str, Any]] = None
+    recommendation_summary: Optional[Dict[str, Any]] = None
+    requirements_schema: Optional[Dict[str, Any]] = None
+    processing_metrics: Optional[Dict[str, Any]] = None
     disclaimer: str = Field(
         default="The match score is an internal AI retrieval indicator. It does not represent official BIS approval, compliance, certification, or legal validity."
     )

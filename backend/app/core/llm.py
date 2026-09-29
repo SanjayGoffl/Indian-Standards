@@ -53,20 +53,42 @@ def get_llm() -> ChatGroq:
     )
 
 
+FALLBACK_MODELS = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+]
+
+
 class LLMService:
     """
     Service wrapper for invoking LLM completions with system and human prompts.
     """
 
+    call_count: int = 0  # process-wide count of LLM invocations (for per-request accounting)
+
     def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        llm = get_llm()
+        LLMService.call_count += 1
         messages = []
         if system_prompt:
             messages.append(SystemMessage(content=system_prompt))
         messages.append(HumanMessage(content=prompt))
-        
-        response = llm.invoke(messages)
-        return getattr(response, "content", str(response))
+
+        api_key = os.getenv("GROQ_API_KEY")
+        configured_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        models_to_try = [configured_model] + [m for m in FALLBACK_MODELS if m != configured_model]
+
+        last_error = None
+        for m in models_to_try:
+            try:
+                llm = ChatGroq(api_key=api_key, model=m, temperature=0)
+                response = llm.invoke(messages)
+                return getattr(response, "content", str(response))
+            except Exception as e:
+                last_error = e
+                continue
+
+        raise last_error or RuntimeError("All LLM models failed.")
 
 
 llm_service = LLMService()

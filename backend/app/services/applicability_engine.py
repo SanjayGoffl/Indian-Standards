@@ -93,24 +93,21 @@ def evaluate_standards_applicability(
             has_verified_qco=has_qco
         )
 
-        is_4984 = "4984" in std.standard_number
-        is_pipe_target = any(w in (target_category or "").lower() for w in ["pipe", "pipes", "piping", "hdpe", "water supply", "effluent", "sewage", "conveyance", "plumbing", "fluid transport", "water distribution"])
+        matched_params = [item['parameter'] for item in matrix if item.get('result') in ['Match', 'Confirmed Match', 'Potential Match']]
+        mismatched_params = [f"{item['parameter']} ({item.get('standard_provision', '')})" for item in matrix if item.get('result') in ['Mismatch', 'No Match']]
+        missing_params = [item['parameter'] for item in matrix if item.get('result') == 'Missing Input']
+        unknown_params = [item['parameter'] for item in matrix if item.get('result') in ['Unknown', 'Requires Official Verification', 'Not Confirmed']]
 
-        if is_4984 and is_pipe_target:
-            classification["applicability_status"] = "Potentially Applicable"
-            dynamic_reasoning = (
-                "Potentially applicable because the standard addresses HDPE pipes for water supplies "
-                "and related conveyance applications. Final applicability requires confirmation of nominal diameter, "
-                "wall thickness, pressure class, material grade, operating conditions, jointing method, "
-                "intended application, and applicable certification requirements."
-            )
+        reasoning_parts = []
+        if classification["applicability_status"] == "Recommended":
+            reasoning_parts.append(f"Recommended because standard addresses {target_category} and matches specifications for: {', '.join(matched_params)}.")
+        elif classification["applicability_status"] == "Potentially Applicable":
+            reasoning_parts.append(f"Potentially applicable because standard addresses {target_category} specifications.")
+            if missing_params:
+                reasoning_parts.append(f"Final applicability requires confirmation of: {', '.join(missing_params)}.")
+            if unknown_params:
+                reasoning_parts.append(f"Technical parameters requiring verification: {', '.join(unknown_params)}.")
         else:
-            # Construct dynamic technical reasoning from matrix results
-            matched_params = [item['parameter'] for item in matrix if item['result'] == 'Match']
-            mismatched_params = [f"{item['parameter']} ({item['standard_provision']})" for item in matrix if item['result'] == 'Mismatch']
-            unknown_params = [item['parameter'] for item in matrix if item['result'] == 'Unknown']
-
-            reasoning_parts = []
             if matched_params:
                 reasoning_parts.append(f"Matches explicit requirements for: {', '.join(matched_params)}.")
             if mismatched_params:
@@ -118,7 +115,7 @@ def evaluate_standards_applicability(
             if unknown_params:
                 reasoning_parts.append(f"Requires verification for: {', '.join(unknown_params)}.")
 
-            dynamic_reasoning = " ".join(reasoning_parts) if reasoning_parts else "Potentially applicable based on domain and specification alignment."
+        dynamic_reasoning = " ".join(reasoning_parts) if reasoning_parts else "Potentially applicable based on domain and specification alignment."
 
         has_ver_src = (getattr(std, "verification_status", "") == "Verified")
 

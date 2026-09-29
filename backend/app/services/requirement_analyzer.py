@@ -201,7 +201,7 @@ def extract_procurement_requirements(input_text: str, user_category: str = None,
         else:
             reqs.append({"category": "Application", "parameter": "Intended Use", "value_spec": input_text.strip()[:150]})
 
-        cat = user_category or ("Electrical Wires & Power Cables" if is_cable else "Thermal Insulation Padding")
+        cat = user_category or ("Electrical Wires & Power Cables" if is_cable else "General Procurement")
         missing_tech = generate_missing_technical_requirements(input_text, cat)
 
         return {
